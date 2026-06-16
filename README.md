@@ -95,14 +95,19 @@ Tunables via env: `IMAGE`, `PORT`, `HF_HOME`, `GPU_MEM_UTIL`, `MAX_NUM_SEQS`.
 `run.sh` is generic. For a model that needs specific, repeatable tuning, a
 dedicated launcher captures the whole flag set in one place — see
 `run-qwen3.6.sh`, which serves `nvidia/Qwen3.6-35B-A3B-NVFP4` with NVFP4 quant
-auto-detect, FP8 KV cache, FlashInfer attention, Marlin MoE, 256K context, MTP
-speculative decoding, and Qwen3's recommended sampling defaults:
+auto-detect, FP8 KV cache, FlashInfer attention, Marlin MoE, 256K context, a
+`0.65` memory-utilization default, and Qwen3's recommended sampling defaults:
 
 ```bash
 ./run-qwen3.6.sh                  # foreground (Ctrl-C to stop)
+./run-qwen3.6.sh --mtp            # enable MTP speculative decoding (off by default)
 DETACH=1 ./run-qwen3.6.sh         # detached server, restarts on boot
 ./run-qwen3.6.sh --max-num-seqs 8 # append/override any vllm serve flag
 ```
+
+MTP speculative decoding is **opt-in** via `--mtp`; without it, no
+`--speculative-config` is passed. The `--mtp` flag is consumed by the script —
+any other flags pass straight through to `vllm serve`.
 
 Sampling defaults (`temperature`, `top_p`, `top_k`, `min_p`, `presence_penalty`,
 `repetition_penalty`) are baked in via `--override-generation-config`. These are
