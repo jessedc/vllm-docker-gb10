@@ -1,0 +1,9 @@
+# Python virtualenv (8+ GB, never commit)
+.venv/
+
+# Local agent/editor state
+.claude/
+
+# Python caches
+__pycache__/
+*.pyc

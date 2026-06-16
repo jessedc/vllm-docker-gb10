@@ -1,0 +1,3 @@
+# The Dockerfile clones vLLM inside the image; keep the build context tiny.
+*
+!Dockerfile
