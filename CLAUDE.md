@@ -24,6 +24,7 @@ vLLM's source is cloned *inside* the image at build time.
 ./run.sh Qwen/Qwen3-8B --max-model-len 32768   # serve a model; extra flags pass to `vllm serve`
 DETACH=1 ./run.sh Qwen/Qwen3-8B          # detached server, restarts on boot
 ./run-qwen3.6.sh [--mtp]                 # tuned preset for nvidia/Qwen3.6-35B-A3B-NVFP4
+./run-gemma4.sh [--no-tools]             # tuned preset for RedHatAI/gemma-4-12B-it-NVFP4 (multimodal)
 ```
 
 API is OpenAI-compatible on `http://localhost:8000/v1` (`curl http://localhost:8000/v1/models`).
@@ -69,6 +70,14 @@ Tracking `main` is the default and is bleeding-edge by design.
   wheel.
 - vLLM's build requirements live at `requirements/build/cuda.txt` (a directory
   layout, not the old `build.txt`).
+- **Very-new model archs need transformers from source, not just the pin.** vLLM
+  `main` recognizes architectures (e.g. `gemma4_unified`) before they reach a
+  tagged transformers release; vLLM only requires `transformers >= 5.5.3`, which
+  is satisfied but insufficient — HF `AutoConfig` rejects the checkpoint before
+  vLLM's own model class loads. The `Dockerfile` therefore installs
+  `transformers @ git+…` (arg `TRANSFORMERS_REF`, default `main`) **after** the
+  kernel compile so the cached build layer is reused; `PIP_CONSTRAINT` still
+  guards the torch pin. Set `--build-arg TRANSFORMERS_REF=<release>` to opt out.
 - `vllm.__version__` reports `0.1.dev1+g<commit>` because the build is a shallow
   clone with no tags (setuptools-scm) — the `+g<commit>` and
   `/etc/vllm-source-commit` are the authoritative provenance.
@@ -85,3 +94,14 @@ Tracking `main` is the default and is bleeding-edge by design.
   speculative decoding is **opt-in** via `--mtp`; the script consumes `--mtp` and
   passes every other flag straight through to `vllm serve`. Sampling values set
   via `--override-generation-config` are server-side **defaults** only.
+- `run-gemma4.sh` serves the unified multimodal `gemma4_unified` checkpoint
+  (text+image+audio). Gotchas baked in: (1) do **not** force
+  `--attention-backend flashinfer` — the model's bidirectional multimodal
+  attention is rejected ("partial multimodal token full attention not
+  supported"); let vLLM auto-pick (lands on `TRITON_ATTN`). (2) `GPU_MEM_UTIL`
+  defaults to **0.65**: util is a fraction of *total* (121.7 GiB) but only
+  ~97.5 GiB is free at startup, so 0.85 overshoots. NVFP4 is auto-detected
+  (compressed-tensors `nvfp4-pack-quantized`) — no `--quantization`. Tool calling
+  + reasoning use the `gemma4` parsers and the in-image chat template at
+  `/opt/vllm/examples/tool_chat_template_gemma4.jinja`; `--no-tools` disables all
+  three. Needs the transformers-from-source build above.

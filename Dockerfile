@@ -80,11 +80,25 @@ RUN --mount=type=cache,target=/ccache \
     pip install --no-build-isolation -r requirements/build/cuda.txt \
  && pip install --no-build-isolation -v .
 
+# Very-new model architectures land in vLLM main before they reach a tagged
+# transformers release. vLLM main recognizes e.g. model_type `gemma4_unified`,
+# but transformers <= 5.6.0 does not, so HF AutoConfig rejects the checkpoint
+# before vLLM's own model class ever loads it (vLLM only requires
+# transformers >= 5.5.3, which is satisfied but insufficient). Install
+# transformers from a newer source revision. PIP_CONSTRAINT still pins the torch
+# family, so this cannot drag in a generic torch wheel; flashinfer stays
+# untouched. Done AFTER the kernel compile so that cached layer is reused.
+# Override the ref (a branch/tag/SHA) or set it to a release like "5.6.0" to opt
+# out: --build-arg TRANSFORMERS_REF=...
+ARG TRANSFORMERS_REF=main
+RUN pip install --no-cache-dir \
+      "transformers @ git+https://github.com/huggingface/transformers.git@${TRANSFORMERS_REF}"
+
 # Record provenance inside the image and sanity-check the result.
 RUN cp /opt/vllm-commit.txt /etc/vllm-source-commit \
- && python3 -c "import vllm, torch, flashinfer; \
+ && python3 -c "import vllm, torch, flashinfer, transformers; \
 print('vllm', vllm.__version__, '| torch', torch.__version__, \
-'| flashinfer', flashinfer.__version__)"
+'| flashinfer', flashinfer.__version__, '| transformers', transformers.__version__)"
 
 WORKDIR /vllm-workspace
 # Inherit the base image ENTRYPOINT ["vllm","serve"].
