@@ -7,3 +7,6 @@
 # Python caches
 __pycache__/
 *.pyc
+
+# Runtime serve logs + host-memory traces (machine-specific, can be large)
+logs/
