@@ -26,7 +26,9 @@ API is on `http://localhost:8000/v1`.
 | `build.sh` | Build driver — resolves pins, tags image, writes `build.lock` | Reusable |
 | `build.lock` | Provenance pin for `--reproduce` | Reproducible |
 | `run.sh` | Generic launcher — serve any HF model | Reusable across models |
-| `run-qwen3.6.sh` | Tuned preset for `nvidia/Qwen3.6-35B-A3B-NVFP4` | Single-purpose template |
+| `run-qwen3.6.sh` | Tuned preset for `nvidia/Qwen3.6-35B-A3B-NVFP4` (MoE) | Single-purpose template |
+| `run-qwen3.6-27b.sh` | Tuned preset for `Qwen3.6-27B` dense (PrismaSCOUT NVFP4) + DFlash | Single-purpose template |
+| `download-qwen3.6-27b.sh` | Pre-fetches the 27B model + DFlash drafter into the HF cache | Helper for the preset above |
 
 Everything targets `sm_121a` (GB10); building for a different GPU means changing
 `ARCH_LIST` in `build.sh` / `TORCH_CUDA_ARCH_LIST` in the Dockerfile.
@@ -113,6 +115,44 @@ Sampling defaults (`temperature`, `top_p`, `top_k`, `min_p`, `presence_penalty`,
 `repetition_penalty`) are baked in via `--override-generation-config`. These are
 server-side **defaults** — a request that sets a field still overrides them, so a
 client should send these values explicitly (or omit them) to keep them in effect.
+
+#### Qwen3.6-27B dense + DFlash (`run-qwen3.6-27b.sh`)
+
+A second preset serves the **dense** `Qwen3.6-27B` — specifically the
+`rdtand/Qwen3.6-27B-PrismaSCOUT-Blackwell-NVFP4-BF16-vllm` mixed-precision NVFP4
+checkpoint — with **DFlash** speculative decoding (the `z-lab/Qwen3.6-27B-DFlash`
+block-diffusion drafter). Run the downloader once, then launch:
+
+```bash
+./download-qwen3.6-27b.sh          # fetch model + drafter into the HF cache (~24 GB)
+./run-qwen3.6-27b.sh               # foreground, DFlash spec decode (default)
+./run-qwen3.6-27b.sh --mtp         # use the model's built-in MTP head instead
+./run-qwen3.6-27b.sh --no-spec     # plain decode, no drafter
+DETACH=1 ./run-qwen3.6-27b.sh      # background server (RESTART=no by default)
+```
+
+Defaults: `262144` context, `--gpu-memory-utilization 0.65`, FlashInfer
+attention, `--mamba-block-size 256` (the model is GDN-hybrid), and the qwen3
+reasoning + qwen3_coder tool-call parsers. Validated on the GB10: DFlash runs at
+~51% draft acceptance (~5.1 accepted tokens/cycle), and at 262K context the KV
+pool (~561K tokens) gives ~2.14× concurrency. The settings translate a community
+`docker-compose` (kept as `qwen36-27b-notes.md` for reference) onto our
+mainline-from-source image — aeon-vllm-ultimate-only env vars and multimodal
+flags are dropped (see the script header for why). Because it's a thinking model,
+give requests generous `max_tokens` (2048+) or the reply is all reasoning.
+
+> **Unified-memory safety (important).** On a model's *first* boot, flashinfer
+> JIT-compiles its FP4 kernels and autotunes `fp4_gemm`; both allocate memory the
+> GPU and host share, **on top of** the `--gpu-memory-utilization` reservation.
+> Unbounded, this overruns the 121 GB pool and triggers a *global* OOM that
+> crashes the whole machine (it did, twice, during bring-up). The script defends
+> against this by default: it caps the JIT compiler (`MAX_JOBS=2`), disables the
+> `fp4_gemm` autotuner (`--no-enable-flashinfer-autotune`, the ~38 GiB offender),
+> persists `/root/.cache` via `CACHE_HOME` so the compile is paid once, adds a
+> `--memory 112g` cgroup backstop, and defaults `RESTART=no` so a bad boot can't
+> crash-loop. It also streams the vLLM log and a 2-second host-memory trace to
+> `logs/` (gitignored) for post-mortem. Extra env knobs: `CACHE_HOME`, `LOG_DIR`,
+> `COMPILE_JOBS`, `MEM_LIMIT`, `RESTART`, `AUTOTUNE` (re-enable only at low util).
 
 ## Notes
 
