@@ -25,6 +25,8 @@ vLLM's source is cloned *inside* the image at build time.
 DETACH=1 ./run.sh Qwen/Qwen3-8B          # detached server, restarts on boot
 ./run-qwen3.6.sh [--mtp]                 # tuned preset for nvidia/Qwen3.6-35B-A3B-NVFP4
 ./run-gemma4.sh [--no-tools]             # tuned preset for RedHatAI/gemma-4-12B-it-NVFP4 (multimodal)
+
+(cd observability && docker compose up -d) # Prometheus + Grafana on the server's /metrics (localhost:3000)
 ```
 
 API is OpenAI-compatible on `http://localhost:8000/v1` (`curl http://localhost:8000/v1/models`).

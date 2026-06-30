@@ -1,0 +1,20 @@
+# Prometheus scrape config for the locally-served vLLM image.
+#
+# The vLLM server is published on the *host* (run.sh maps -p ${PORT}:8000),
+# so from inside this container we reach it via host.docker.internal, which
+# docker-compose maps to the host gateway (see extra_hosts in compose.yml).
+#
+# Serving on a non-default host port (PORT=8001 ./run.sh ...)? Change the
+# target below to host.docker.internal:8001 and `docker compose restart prometheus`.
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: vllm
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - host.docker.internal:8000
+        labels:
+          service: vllm-spark

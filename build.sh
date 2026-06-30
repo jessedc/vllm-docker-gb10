@@ -88,5 +88,24 @@ VLLM_COMMIT="$VLLM_COMMIT"
 ARCH_LIST="$ARCH_LIST"
 EOF
 
+# --- 5. refresh vendored Grafana dashboards to match the built commit ------
+# vLLM's own dashboards live in its source tree; keep our vendored copies in
+# sync with $VLLM_COMMIT so panel queries match the metrics this image emits.
+# Best-effort: a network hiccup must not fail an otherwise-good build.
+DASH_DIR="observability/grafana/dashboards"
+if [[ -d "$DASH_DIR" ]]; then
+  raw="https://raw.githubusercontent.com/vllm-project/vllm/${VLLM_COMMIT}/examples/observability/dashboards/grafana"
+  for d in performance_statistics.json query_statistics.json; do
+    tmp="$(mktemp)"
+    if curl -fsSL "$raw/$d" -o "$tmp" && head -c1 "$tmp" | grep -q '{'; then
+      mv "$tmp" "$DASH_DIR/$d"
+      echo ">> refreshed dashboard $d @ ${SHORT}"
+    else
+      rm -f "$tmp"
+      echo ">> WARN: could not refresh $d (kept existing copy)" >&2
+    fi
+  done
+fi
+
 echo ">> done. Built $TAG"
 echo ">> serve with:  ./run.sh <model-id>"

@@ -29,6 +29,7 @@ API is on `http://localhost:8000/v1`.
 | `run-qwen3.6.sh` | Tuned preset for `nvidia/Qwen3.6-35B-A3B-NVFP4` (MoE) | Single-purpose template |
 | `run-qwen3.6-27b.sh` | Tuned preset for `Qwen3.6-27B` dense (PrismaSCOUT NVFP4) + DFlash | Single-purpose template |
 | `download-qwen3.6-27b.sh` | Pre-fetches the 27B model + DFlash drafter into the HF cache | Helper for the preset above |
+| `observability/` | One-command Prometheus + Grafana stack for the server's `/metrics` | Reusable across models |
 
 Everything targets `sm_121a` (GB10); building for a different GPU means changing
 `ARCH_LIST` in `build.sh` / `TORCH_CUDA_ARCH_LIST` in the Dockerfile.
