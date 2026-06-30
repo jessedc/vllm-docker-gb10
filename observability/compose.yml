@@ -1,0 +1,51 @@
+# Prometheus + Grafana for the locally-built vLLM server.
+#
+#   cd observability && docker compose up -d
+#   open http://localhost:3000   (Grafana, anonymous — dashboards under "vLLM")
+#
+# Prometheus scrapes the vLLM server you launched with ../run.sh on the host
+# (host.docker.internal -> host gateway). Stop with `docker compose down`;
+# add `-v` to also wipe the Prometheus/Grafana data volumes.
+#
+# Override ports without editing this file:
+#   GRAFANA_PORT=3001 PROM_PORT=9091 docker compose up -d
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: vllm-prometheus
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${PROM_PORT:-9090}:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: vllm-grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      # Single-machine, localhost-only: skip the login wall, land on a dashboard.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_USERS_DEFAULT_THEME: "dark"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+
+volumes:
+  prometheus-data:
+  grafana-data:

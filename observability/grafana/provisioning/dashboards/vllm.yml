@@ -1,0 +1,17 @@
+# Loads every dashboard JSON in /var/lib/grafana/dashboards on boot.
+# These are vLLM's own dashboards (examples/observability/dashboards/grafana),
+# vendored at the pinned build commit so the panel queries match the metrics
+# this image emits.
+apiVersion: 1
+
+providers:
+  - name: vllm
+    orgId: 1
+    folder: vLLM
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

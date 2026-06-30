@@ -1,0 +1,13 @@
+# Auto-wires Grafana to the Prometheus container on first boot.
+# The vLLM dashboards bind their `DS_PROMETHEUS` variable to the default
+# datasource, so isDefault: true is what makes them light up automatically.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
