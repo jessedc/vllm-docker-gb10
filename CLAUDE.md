@@ -122,7 +122,15 @@ Tracking `main` is the default and is bleeding-edge by design.
   the model's **built-in MTP head** (`num_speculative_tokens=2`), not DFlash —
   **on by default** (`--no-spec` disables it) because it **measured +79% decode
   (11.3→20.2 tok/s) with tool calling intact**. MTP defaults `GPU_MEM_UTIL` to
-  0.52 (vs 0.72 for `--no-spec`). Single-stream ~11 tok/s without MTP is the Spark's
+  0.52 (vs 0.72 for `--no-spec`). **Reasoning caveat:** the `qwen3` reasoning
+  parser *strips and discards* this checkpoint's `<think>…</think>` (leaves
+  `reasoning_content` null), and because it buffers until `</think>`, a small
+  client `max_tokens` truncates mid-thought → **empty response**. Mitigations
+  baked in: `DEFAULT_MAX_TOKENS=2048` (injected as generation-config
+  `max_new_tokens`) so no-max_tokens clients don't truncate, and
+  `--no-reasoning-parser` to drop the parser entirely so the raw
+  `<think>…</think>` is returned verbatim in `content` (client splits it itself;
+  tool calling is unaffected). Single-stream ~11 tok/s without MTP is the Spark's
   memory-bandwidth ceiling for a 27B, not a misconfig. Image supports the b12x
   (MoE) kernels at **flashinfer 0.6.12** (guide's ≥0.6.13 is conservative).
   Distinct from `run-qwen3.6-27b.sh` (PrismaSCOUT + DFlash); reuses that script's

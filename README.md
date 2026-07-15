@@ -169,8 +169,22 @@ default** here (measured +79%, see below) — rather than an external drafter:
 ./download-qwen3.6-27b-nvfp4.sh      # fetch the checkpoint into the HF cache (~16 GB)
 ./run-qwen3.6-27b-nvfp4.sh           # foreground, MTP spec decode (default; num_speculative_tokens=2)
 ./run-qwen3.6-27b-nvfp4.sh --no-spec # disable MTP -> plain autoregressive decode
+./run-qwen3.6-27b-nvfp4.sh --no-reasoning-parser  # return the raw <think> trace in `content`
 DETACH=1 ./run-qwen3.6-27b-nvfp4.sh  # background server (RESTART=no by default)
 ```
+
+> **Thinking / reasoning traces.** This model thinks by default, and its
+> `<think>` block alone can run 500+ tokens. Two gotchas, both handled: (1) the
+> `qwen3` reasoning parser *strips and discards* the thinking (`reasoning_content`
+> comes back `null`); and because it buffers until `</think>`, a **small client
+> `max_tokens` truncates mid-thought and returns an empty response**. The preset
+> sets `DEFAULT_MAX_TOKENS=2048` (a generation-config `max_new_tokens` default, env
+> overridable) so no-`max_tokens` clients finish thinking, and offers
+> **`--no-reasoning-parser`** to drop the parser so the raw `<think>…</think>answer`
+> is returned verbatim in `content` (the client splits it — tool calling still
+> works). If you don't want thinking at all, send
+> `chat_template_kwargs: {"enable_thinking": false}`. Note `preserve_thinking` only
+> affects how *past* turns are re-rendered, not the current response.
 
 NVFP4 is auto-detected (`compressed-tensors`), so there is no `--quantization`;
 the attention backend is **left to auto-pick** because forcing FlashInfer breaks

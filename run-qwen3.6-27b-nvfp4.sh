@@ -54,12 +54,13 @@
 #   ./run-qwen3.6-27b-nvfp4.sh              # foreground, MTP spec decode (DEFAULT; measured +79%)
 #   ./run-qwen3.6-27b-nvfp4.sh --no-spec    # disable MTP -> plain autoregressive decode
 #   ./run-qwen3.6-27b-nvfp4.sh --mtp        # explicit MTP (same as default)
+#   ./run-qwen3.6-27b-nvfp4.sh --no-reasoning-parser  # return raw <think> in content
 #   DETACH=1 ./run-qwen3.6-27b-nvfp4.sh     # background server (RESTART=no by default)
 #   ./run-qwen3.6-27b-nvfp4.sh --max-num-seqs 8   # append/override any vllm serve flag
 #
 # Env: IMAGE, PORT, HF_TOKEN, HF_HOME, GPU_MEM_UTIL, MAX_NUM_SEQS, MAX_MODEL_LEN,
-#      SPEC_TOKENS, CHAT_TEMPLATE, CACHE_HOME, LOG_DIR, COMPILE_JOBS, MEM_LIMIT,
-#      RESTART, VLLM_LOG_LEVEL, AUTOTUNE.
+#      DEFAULT_MAX_TOKENS (default 2048), SPEC_TOKENS, CHAT_TEMPLATE, CACHE_HOME,
+#      LOG_DIR, COMPILE_JOBS, MEM_LIMIT, RESTART, VLLM_LOG_LEVEL, AUTOTUNE.
 set -euo pipefail
 
 IMAGE="${IMAGE:-vllm-spark:latest}"
@@ -75,14 +76,22 @@ mkdir -p "$HF_HOME" "$CACHE_HOME"
 # --- arg parsing -----------------------------------------------------------
 # Spec-decode mode: mtp (DEFAULT) | none. MTP is on by default because it measured
 # +79% decode throughput (11.3->20.2 tok/s) with tool calling intact; --no-spec
-# turns it off. Everything we don't recognise passes straight through to `vllm serve`.
+# turns it off.
+# --no-reasoning-parser: drop `--reasoning-parser qwen3`. That parser strips this
+# checkpoint's <think>...</think> block and DISCARDS it (reasoning_content stays
+# null), so thinking traces never reach the client. Without a reasoning parser vLLM
+# returns the raw output verbatim in `content` (thinking + </think> + answer), which
+# a client (e.g. opencode) can split itself. See the header note.
+# Everything we don't recognise passes straight through to `vllm serve`.
 SPEC=mtp
+NO_REASONING=0
 passthrough=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --mtp)     SPEC=mtp;   shift ;;
-    --no-spec) SPEC=none;  shift ;;
-    *)         passthrough+=("$1"); shift ;;
+    --mtp)                 SPEC=mtp;        shift ;;
+    --no-spec)             SPEC=none;       shift ;;
+    --no-reasoning-parser) NO_REASONING=1;  shift ;;
+    *)                     passthrough+=("$1"); shift ;;
   esac
 done
 
@@ -97,6 +106,13 @@ esac
 # NOTE: no --quantization (compressed-tensors NVFP4 auto-detected) and no
 # --attention-backend (auto-pick; see header for why forcing flashinfer breaks
 # this multimodal model).
+#
+# DEFAULT_MAX_TOKENS (2048) is injected as the generation-config `max_new_tokens`
+# (vLLM maps that to the default `max_tokens`). This model THINKS by default and
+# its <think> block alone can run 500+ tokens, so a small client-side max_tokens
+# gets truncated mid-thought -> empty response. 2048 lets typical thinking + answer
+# finish when a client doesn't send its own max_tokens. Override via env.
+DEFAULT_MAX_TOKENS="${DEFAULT_MAX_TOKENS:-2048}"
 vllm_args=(
   "$MODEL"
   --served-model-name qwen/qwen3.6-27b-nvfp4
@@ -115,10 +131,16 @@ vllm_args=(
   --limit-mm-per-prompt '{"image":4,"video":2}'   # checkpoint carries image+video tokens
   --enable-auto-tool-choice
   --tool-call-parser qwen3_coder
-  --reasoning-parser qwen3
   --generation-config vllm
-  --override-generation-config '{"temperature":0.7,"top_p":0.8,"top_k":40,"presence_penalty":0.0,"repetition_penalty":1.0}'
+  --override-generation-config "{\"temperature\":0.7,\"top_p\":0.8,\"top_k\":40,\"presence_penalty\":0.0,\"repetition_penalty\":1.0,\"max_new_tokens\":${DEFAULT_MAX_TOKENS}}"
 )
+
+# Reasoning parser is ON by default (strips <think>...</think> from `content`), but
+# on this checkpoint it drops the thinking instead of surfacing reasoning_content.
+# --no-reasoning-parser omits it so the raw thinking is returned verbatim in content.
+if [[ "$NO_REASONING" != 1 ]]; then
+  vllm_args+=(--reasoning-parser qwen3)
+fi
 
 # flashinfer's fp4_gemm autotuner allocates large GEMM workspaces that are NOT
 # counted in --gpu-memory-utilization; on the Spark's unified memory they stack on
