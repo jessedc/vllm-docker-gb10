@@ -126,7 +126,7 @@ Tracking `main` is the default and is bleeding-edge by design.
   parser *strips and discards* this checkpoint's `<think>…</think>` (leaves
   `reasoning_content` null), and because it buffers until `</think>`, a small
   client `max_tokens` truncates mid-thought → **empty response**. Mitigations
-  baked in: `DEFAULT_MAX_TOKENS=2048` (injected as generation-config
+  baked in: `DEFAULT_MAX_TOKENS=4096` (injected as generation-config
   `max_new_tokens`) so no-max_tokens clients don't truncate, and
   `--no-reasoning-parser` to drop the parser entirely so the raw
   `<think>…</think>` is returned verbatim in `content` (client splits it itself;

@@ -59,7 +59,7 @@
 #   ./run-qwen3.6-27b-nvfp4.sh --max-num-seqs 8   # append/override any vllm serve flag
 #
 # Env: IMAGE, PORT, HF_TOKEN, HF_HOME, GPU_MEM_UTIL, MAX_NUM_SEQS, MAX_MODEL_LEN,
-#      DEFAULT_MAX_TOKENS (default 2048), SPEC_TOKENS, CHAT_TEMPLATE, CACHE_HOME,
+#      DEFAULT_MAX_TOKENS (default 4096), SPEC_TOKENS, CHAT_TEMPLATE, CACHE_HOME,
 #      LOG_DIR, COMPILE_JOBS, MEM_LIMIT, RESTART, VLLM_LOG_LEVEL, AUTOTUNE.
 set -euo pipefail
 
@@ -107,12 +107,12 @@ esac
 # --attention-backend (auto-pick; see header for why forcing flashinfer breaks
 # this multimodal model).
 #
-# DEFAULT_MAX_TOKENS (2048) is injected as the generation-config `max_new_tokens`
+# DEFAULT_MAX_TOKENS (4096) is injected as the generation-config `max_new_tokens`
 # (vLLM maps that to the default `max_tokens`). This model THINKS by default and
 # its <think> block alone can run 500+ tokens, so a small client-side max_tokens
-# gets truncated mid-thought -> empty response. 2048 lets typical thinking + answer
+# gets truncated mid-thought -> empty response. 4096 lets longer thinking + answer
 # finish when a client doesn't send its own max_tokens. Override via env.
-DEFAULT_MAX_TOKENS="${DEFAULT_MAX_TOKENS:-2048}"
+DEFAULT_MAX_TOKENS="${DEFAULT_MAX_TOKENS:-4096}"
 vllm_args=(
   "$MODEL"
   --served-model-name qwen/qwen3.6-27b-nvfp4

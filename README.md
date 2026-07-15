@@ -178,7 +178,7 @@ DETACH=1 ./run-qwen3.6-27b-nvfp4.sh  # background server (RESTART=no by default)
 > `qwen3` reasoning parser *strips and discards* the thinking (`reasoning_content`
 > comes back `null`); and because it buffers until `</think>`, a **small client
 > `max_tokens` truncates mid-thought and returns an empty response**. The preset
-> sets `DEFAULT_MAX_TOKENS=2048` (a generation-config `max_new_tokens` default, env
+> sets `DEFAULT_MAX_TOKENS=4096` (a generation-config `max_new_tokens` default, env
 > overridable) so no-`max_tokens` clients finish thinking, and offers
 > **`--no-reasoning-parser`** to drop the parser so the raw `<think>…</think>answer`
 > is returned verbatim in `content` (the client splits it — tool calling still
