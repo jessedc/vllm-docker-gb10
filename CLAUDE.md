@@ -107,3 +107,18 @@ Tracking `main` is the default and is bleeding-edge by design.
   + reasoning use the `gemma4` parsers and the in-image chat template at
   `/opt/vllm/examples/tool_chat_template_gemma4.jinja`; `--no-tools` disables all
   three. Needs the transformers-from-source build above.
+- `run-qwen3.6-27b-nvfp4.sh` serves `unsloth/Qwen3.6-27B-NVFP4` (dense,
+  multimodal `qwen3_5`) per unsloth's DGX Spark guide. Two guide-critical bits,
+  both baked in: env `CUTE_DSL_ARCH=sm_121a` **and** `--moe-backend
+  flashinfer_b12x` select the Blackwell **b12x cute-DSL** NVFP4 path — omit
+  either and inference is ~2× slower (marlin W4A16 fallback). NVFP4 is
+  auto-detected (`compressed-tensors`) so **no `--quantization`**, and
+  `--attention-backend` is **left to auto-pick** (this model is multimodal;
+  forcing flashinfer hits the same rejection as gemma4 — the b12x *GEMM* path is
+  independent of the attention backend, so nothing is lost). Spec decode is the
+  model's **built-in MTP head**, opt-in via `--mtp` (`num_speculative_tokens=2`),
+  not DFlash. The current image already supports b12x at **flashinfer 0.6.12**
+  (the guide's ≥0.6.13 pin is conservative; verify with
+  `has_flashinfer_b12x_gemm()/…_moe()`). Distinct from `run-qwen3.6-27b.sh`,
+  which serves a *different* 27B (PrismaSCOUT body + DFlash drafter); this one
+  reuses that script's unified-memory OOM safety scaffolding verbatim.

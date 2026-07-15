@@ -29,6 +29,8 @@ API is on `http://localhost:8000/v1`.
 | `run-qwen3.6.sh` | Tuned preset for `nvidia/Qwen3.6-35B-A3B-NVFP4` (MoE) | Single-purpose template |
 | `run-qwen3.6-27b.sh` | Tuned preset for `Qwen3.6-27B` dense (PrismaSCOUT NVFP4) + DFlash | Single-purpose template |
 | `download-qwen3.6-27b.sh` | Pre-fetches the 27B model + DFlash drafter into the HF cache | Helper for the preset above |
+| `run-qwen3.6-27b-nvfp4.sh` | Tuned preset for `unsloth/Qwen3.6-27B-NVFP4` (b12x cute-DSL, built-in MTP) | Single-purpose template |
+| `download-qwen3.6-27b-nvfp4.sh` | Pre-fetches the unsloth 27B NVFP4 checkpoint into the HF cache | Helper for the preset above |
 | `observability/` | One-command Prometheus + Grafana stack for the server's `/metrics` | Reusable across models |
 
 Everything targets `sm_121a` (GB10); building for a different GPU means changing
@@ -154,6 +156,37 @@ give requests generous `max_tokens` (2048+) or the reply is all reasoning.
 > crash-loop. It also streams the vLLM log and a 2-second host-memory trace to
 > `logs/` (gitignored) for post-mortem. Extra env knobs: `CACHE_HOME`, `LOG_DIR`,
 > `COMPILE_JOBS`, `MEM_LIMIT`, `RESTART`, `AUTOTUNE` (re-enable only at low util).
+
+#### Qwen3.6-27B unsloth NVFP4 (`run-qwen3.6-27b-nvfp4.sh`)
+
+A third preset serves **unsloth's** own NVFP4 quant, `unsloth/Qwen3.6-27B-NVFP4` —
+the dense, **multimodal** (image + video) `qwen3_5` checkpoint — following
+[unsloth's DGX Spark guide](https://unsloth.ai/docs/models/qwen3.6#dgx-spark-with-nvfp4-quants).
+Unlike the DFlash preset above it uses the model's **built-in MTP head** (opt-in)
+rather than an external drafter:
+
+```bash
+./download-qwen3.6-27b-nvfp4.sh    # fetch the checkpoint into the HF cache (~16 GB)
+./run-qwen3.6-27b-nvfp4.sh         # foreground, plain autoregressive decode
+./run-qwen3.6-27b-nvfp4.sh --mtp   # enable the built-in MTP head (num_speculative_tokens=2)
+DETACH=1 ./run-qwen3.6-27b-nvfp4.sh  # background server (RESTART=no by default)
+```
+
+The two guide-critical bits are baked in: the container sets
+`CUTE_DSL_ARCH=sm_121a` and passes `--moe-backend flashinfer_b12x` to select the
+Blackwell **b12x cute-DSL** NVFP4 path (skip either and inference is ~2× slower).
+NVFP4 is auto-detected (`compressed-tensors`), so there is no `--quantization`;
+the attention backend is **left to auto-pick** because forcing FlashInfer breaks
+this model's multimodal attention (same as gemma4). It inherits the full
+unified-memory safety machinery described above (`MAX_JOBS=2`, autotuner off,
+`CACHE_HOME` persistence, `--memory 112g`, `RESTART=no`, `logs/` memtrace). Verify
+the image supports b12x (both should print `True`):
+
+```bash
+docker run --rm --gpus all --entrypoint python3 vllm-spark:latest -c \
+  "import torch; from vllm.utils.flashinfer import has_flashinfer_b12x_gemm as g, \
+   has_flashinfer_b12x_moe as m; print(torch.cuda.get_device_capability(), g(), m())"
+```
 
 ## Notes
 
