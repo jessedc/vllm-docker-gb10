@@ -172,15 +172,27 @@ rather than an external drafter:
 DETACH=1 ./run-qwen3.6-27b-nvfp4.sh  # background server (RESTART=no by default)
 ```
 
-The two guide-critical bits are baked in: the container sets
-`CUTE_DSL_ARCH=sm_121a` and passes `--moe-backend flashinfer_b12x` to select the
-Blackwell **b12x cute-DSL** NVFP4 path (skip either and inference is ~2× slower).
 NVFP4 is auto-detected (`compressed-tensors`), so there is no `--quantization`;
 the attention backend is **left to auto-pick** because forcing FlashInfer breaks
 this model's multimodal attention (same as gemma4). It inherits the full
 unified-memory safety machinery described above (`MAX_JOBS=2`, autotuner off,
-`CACHE_HOME` persistence, `--memory 112g`, `RESTART=no`, `logs/` memtrace). Verify
-the image supports b12x (both should print `True`):
+`CACHE_HOME` persistence, `--memory 112g`, `RESTART=no`, `logs/` memtrace).
+
+> **b12x, measured — read before trusting the guide's flags.** The guide tells
+> you to pass `--moe-backend flashinfer_b12x` "or get 2× slower inference." On
+> this **dense** checkpoint that flag is a **no-op** (there are no MoE layers) —
+> it's kept only for guide parity / a future MoE variant. The dense NVFP4 GEMM
+> auto-selects `FlashInferCutlassNvFp4LinearKernel` (cutlass), which is the best
+> available path and **not** the marlin W4A16 worst case. There is nothing faster
+> to force: `--linear-backend flashinfer_b12x` **hard-fails on boot** in this
+> build (no b12x linear kernel for the layer type). `CUTE_DSL_ARCH=sm_121a` is set
+> per the guide and is harmless. **Measured on the GB10:** single-stream decode is
+> ~**11 tok/s** (the Spark's memory-bandwidth ceiling for a 27B), rising to
+> ~**20 tok/s (+79%)** with `--mtp` — which keeps multi-turn tool calling fully
+> correct (`get_weather` → answer → `add` → answer verified), draft acceptance
+> ~65–80%. **Recommendation: run with `--mtp`.**
+
+Verify the image supports the b12x (MoE) kernels (both should print `True`):
 
 ```bash
 docker run --rm --gpus all --entrypoint python3 vllm-spark:latest -c \

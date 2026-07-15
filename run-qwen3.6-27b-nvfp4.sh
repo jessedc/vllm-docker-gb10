@@ -10,20 +10,30 @@
 # *multimodal* qwen3_5 checkpoint, and it uses the model's built-in MTP head
 # instead of an external DFlash drafter.
 #
-# The two guide-critical bits (skip either and inference is ~2x slower):
-#   * env  CUTE_DSL_ARCH=sm_121a         -> selects the Blackwell cute-DSL kernels
-#   * flag --moe-backend flashinfer_b12x -> the b12x cute-DSL NVFP4 path (not marlin)
-# Verify the image supports it (both must print True):
-#   docker run --rm --gpus all --entrypoint python3 vllm-spark:latest -c \
-#     "import torch; from vllm.utils.flashinfer import has_flashinfer_b12x_gemm as g, \
-#      has_flashinfer_b12x_moe as m; print(torch.cuda.get_device_capability(), g(), m())"
-#
 # NVFP4 is auto-detected from config.json (quant_method=compressed-tensors), so we
 # pass NO --quantization -- matching the guide command and the 35B/gemma4 presets.
 # The attention backend is left to vLLM's auto-pick: this model is multimodal, and
 # forcing --attention-backend flashinfer triggers the same rejection gemma4 hits
-# ("partial multimodal token full attention not supported"). The b12x GEMM path is
-# independent of the attention backend, so this does not cost the b12x speedup.
+# ("partial multimodal token full attention not supported").
+#
+# b12x REALITY-CHECK (measured 2026-07-15, not just the guide's wording):
+#   * This checkpoint is DENSE (no MoE layers), so the guide's
+#     `--moe-backend flashinfer_b12x` is a NO-OP here. It is kept below only for
+#     guide parity / a future MoE variant -- it boots fine but changes nothing.
+#   * The dense NVFP4 GEMM auto-selects FlashInferCutlassNvFp4LinearKernel
+#     (cutlass). That is the best available dense path -- NOT the marlin W4A16
+#     worst case the guide warns about. There is no faster option to force:
+#     `--linear-backend flashinfer_b12x` HARD-FAILS on boot in this build
+#     ("no 'flashinfer_b12x' kernel exists for this layer type").
+#   * env CUTE_DSL_ARCH=sm_121a is set per the guide (harmless; only bites the
+#     cute-DSL kernels where they actually apply).
+#   * Single-stream ~11 tok/s (no MTP) is the Spark's memory-bandwidth ceiling
+#     for a 27B, not a misconfig. --mtp measured +79% (11.3 -> 20.2 tok/s) with
+#     tool calling intact -- prefer it (see --mtp below).
+# Confirm the image has the b12x (MoE) kernels at all:
+#   docker run --rm --gpus all --entrypoint python3 vllm-spark:latest -c \
+#     "import torch; from vllm.utils.flashinfer import has_flashinfer_b12x_gemm as g, \
+#      has_flashinfer_b12x_moe as m; print(torch.cuda.get_device_capability(), g(), m())"
 #
 # Run ./download-qwen3.6-27b-nvfp4.sh once first to populate the HF cache.
 #
@@ -90,7 +100,7 @@ vllm_args=(
   --served-model-name qwen/qwen3.6-27b-nvfp4
   --port 8000
   --trust-remote-code
-  --moe-backend flashinfer_b12x           # guide-critical: b12x cute-DSL NVFP4 path
+  --moe-backend flashinfer_b12x           # guide parity only: NO-OP on this dense model (no MoE layers)
   --kv-cache-dtype auto
   --mamba-block-size 256                  # Qwen3.6 has GDN/linear-attention layers
   --max-model-len "${MAX_MODEL_LEN:-262144}"
