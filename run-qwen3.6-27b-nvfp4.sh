@@ -28,8 +28,9 @@
 #   * env CUTE_DSL_ARCH=sm_121a is set per the guide (harmless; only bites the
 #     cute-DSL kernels where they actually apply).
 #   * Single-stream ~11 tok/s (no MTP) is the Spark's memory-bandwidth ceiling
-#     for a 27B, not a misconfig. --mtp measured +79% (11.3 -> 20.2 tok/s) with
-#     tool calling intact -- prefer it (see --mtp below).
+#     for a 27B, not a misconfig. The built-in MTP head measured +79%
+#     (11.3 -> 20.2 tok/s) with tool calling intact, so it is the DEFAULT here;
+#     pass --no-spec to disable it.
 # Confirm the image has the b12x (MoE) kernels at all:
 #   docker run --rm --gpus all --entrypoint python3 vllm-spark:latest -c \
 #     "import torch; from vllm.utils.flashinfer import has_flashinfer_b12x_gemm as g, \
@@ -50,9 +51,9 @@
 # After the first successful (cache-warming) boot you can safely raise MAX_MODEL_LEN.
 #
 # Usage:
-#   ./run-qwen3.6-27b-nvfp4.sh              # foreground, plain autoregressive decode
-#   ./run-qwen3.6-27b-nvfp4.sh --mtp        # enable the model's built-in MTP head
-#   ./run-qwen3.6-27b-nvfp4.sh --no-spec    # explicit no-spec (same as default)
+#   ./run-qwen3.6-27b-nvfp4.sh              # foreground, MTP spec decode (DEFAULT; measured +79%)
+#   ./run-qwen3.6-27b-nvfp4.sh --no-spec    # disable MTP -> plain autoregressive decode
+#   ./run-qwen3.6-27b-nvfp4.sh --mtp        # explicit MTP (same as default)
 #   DETACH=1 ./run-qwen3.6-27b-nvfp4.sh     # background server (RESTART=no by default)
 #   ./run-qwen3.6-27b-nvfp4.sh --max-num-seqs 8   # append/override any vllm serve flag
 #
@@ -72,9 +73,10 @@ CACHE_HOME="${CACHE_HOME:-$HOME/.cache/vllm-spark}"
 mkdir -p "$HF_HOME" "$CACHE_HOME"
 
 # --- arg parsing -----------------------------------------------------------
-# Spec-decode mode: none (default) | mtp. Everything we don't recognise passes
-# straight through to `vllm serve`.
-SPEC=none
+# Spec-decode mode: mtp (DEFAULT) | none. MTP is on by default because it measured
+# +79% decode throughput (11.3->20.2 tok/s) with tool calling intact; --no-spec
+# turns it off. Everything we don't recognise passes straight through to `vllm serve`.
+SPEC=mtp
 passthrough=()
 while [[ $# -gt 0 ]]; do
   case "$1" in

@@ -162,13 +162,13 @@ give requests generous `max_tokens` (2048+) or the reply is all reasoning.
 A third preset serves **unsloth's** own NVFP4 quant, `unsloth/Qwen3.6-27B-NVFP4` —
 the dense, **multimodal** (image + video) `qwen3_5` checkpoint — following
 [unsloth's DGX Spark guide](https://unsloth.ai/docs/models/qwen3.6#dgx-spark-with-nvfp4-quants).
-Unlike the DFlash preset above it uses the model's **built-in MTP head** (opt-in)
-rather than an external drafter:
+Unlike the DFlash preset above it uses the model's **built-in MTP head** — **on by
+default** here (measured +79%, see below) — rather than an external drafter:
 
 ```bash
-./download-qwen3.6-27b-nvfp4.sh    # fetch the checkpoint into the HF cache (~16 GB)
-./run-qwen3.6-27b-nvfp4.sh         # foreground, plain autoregressive decode
-./run-qwen3.6-27b-nvfp4.sh --mtp   # enable the built-in MTP head (num_speculative_tokens=2)
+./download-qwen3.6-27b-nvfp4.sh      # fetch the checkpoint into the HF cache (~16 GB)
+./run-qwen3.6-27b-nvfp4.sh           # foreground, MTP spec decode (default; num_speculative_tokens=2)
+./run-qwen3.6-27b-nvfp4.sh --no-spec # disable MTP -> plain autoregressive decode
 DETACH=1 ./run-qwen3.6-27b-nvfp4.sh  # background server (RESTART=no by default)
 ```
 
@@ -188,9 +188,10 @@ unified-memory safety machinery described above (`MAX_JOBS=2`, autotuner off,
 > build (no b12x linear kernel for the layer type). `CUTE_DSL_ARCH=sm_121a` is set
 > per the guide and is harmless. **Measured on the GB10:** single-stream decode is
 > ~**11 tok/s** (the Spark's memory-bandwidth ceiling for a 27B), rising to
-> ~**20 tok/s (+79%)** with `--mtp` — which keeps multi-turn tool calling fully
-> correct (`get_weather` → answer → `add` → answer verified), draft acceptance
-> ~65–80%. **Recommendation: run with `--mtp`.**
+> ~**20 tok/s (+79%)** with the built-in MTP head — which keeps multi-turn tool
+> calling fully correct (`get_weather` → answer → `add` → answer verified), draft
+> acceptance ~65–80%. **MTP is therefore the default here**; pass `--no-spec` to
+> disable it (drops to ~11 tok/s, `--gpu-memory-utilization` 0.72 instead of 0.52).
 
 Verify the image supports the b12x (MoE) kernels (both should print `True`):
 

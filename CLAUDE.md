@@ -119,9 +119,10 @@ Tracking `main` is the default and is bleeding-edge by design.
   the marlin W4A16 worst case. Do **not** pass `--linear-backend flashinfer_b12x`:
   this build has no b12x *linear* kernel for the layer type and it **hard-fails on
   boot**. `CUTE_DSL_ARCH=sm_121a` is set per the guide (harmless). Spec decode is
-  the model's **built-in MTP head**, opt-in via `--mtp` (`num_speculative_tokens=2`),
-  not DFlash — **measured +79% decode (11.3→20.2 tok/s) with tool calling intact**,
-  so prefer it. Single-stream ~11 tok/s without MTP is the Spark's
+  the model's **built-in MTP head** (`num_speculative_tokens=2`), not DFlash —
+  **on by default** (`--no-spec` disables it) because it **measured +79% decode
+  (11.3→20.2 tok/s) with tool calling intact**. MTP defaults `GPU_MEM_UTIL` to
+  0.52 (vs 0.72 for `--no-spec`). Single-stream ~11 tok/s without MTP is the Spark's
   memory-bandwidth ceiling for a 27B, not a misconfig. Image supports the b12x
   (MoE) kernels at **flashinfer 0.6.12** (guide's ≥0.6.13 is conservative).
   Distinct from `run-qwen3.6-27b.sh` (PrismaSCOUT + DFlash); reuses that script's
