@@ -4,6 +4,9 @@ A small, repeatable Docker build that **compiles vLLM from source** for this
 machine's GPU — the NVIDIA **GB10 Grace Blackwell** (compute capability
 **`sm_121a`**, `aarch64`, CUDA 13).
 
+> 📊 **Benchmark:** [Qwen3.6-27B NVFP4 multi-turn tool calling](benchmarks/qwen3.6-27b-tool-calling.md)
+> — unsloth (MTP) vs PrismaSCOUT (DFlash): throughput and tool-calling accuracy.
+
 ## Overview
 
 vLLM ships no `sm_121` wheels, so this project builds its own image and gives you
