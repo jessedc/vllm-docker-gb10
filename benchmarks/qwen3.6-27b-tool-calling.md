@@ -82,16 +82,41 @@ Raw per-run data: [`results-unsloth-nvfp4-mtp.json`](./results-unsloth-nvfp4-mtp
   reasoning-truncation risk the `run-qwen3.6-27b*.sh` header notes call out for
   these Qwen3.6 checkpoints; it over-thinks "128×4 then ÷8" and never stops.
 
+## Follow-up: does `--no-reasoning-parser` fix PrismaSCOUT's stall?
+
+**No — it makes tool calling substantially worse.** Re-ran the identical suite
+against PrismaSCOUT served with `--no-reasoning-parser` (raw thinking returned in
+`content` instead of being parsed out).
+Raw data: [`results-prismascout-dflash-no-reasoning.json`](./results-prismascout-dflash-no-reasoning.json).
+
+| Metric | Parser **ON** (default) | Parser **OFF** |
+|---|---|---|
+| Final-answer accuracy | 93.3% (14/15) | **80.0% (12/15)** |
+| Tool-selection accuracy | 93.3% | **46.7% (7/15)** |
+| Tool calls emitted | 34 | **16** |
+| End-to-end throughput | 41.1 tok/s | 33.5 tok/s |
+| First-round TTFT | 8.9 s | **0.39 s** |
+
+Without the reasoning channel the model **rambles its plan in prose** ("*I need to
+use the `convert_currency` tool. First call:…*") and frequently **never emits the
+structured tool call** (`rounds=1`, no calls) — it answers inline (fine for easy
+arithmetic, wrong for the currency/population tasks that need the tool's data). It
+halves tool usage and drops selection accuracy from 93% → 47%. The only win is
+TTFT (thinking streams immediately rather than buffering to `</think>`), which
+does not offset the accuracy loss. **Keep the reasoning parser ON for agentic tool
+calling.** (`--no-reasoning-parser` remains available on the script for a
+non-tool-calling client that wants the raw thinking — e.g. opencode.)
+
 ## Bottom line
 
 - Want **max throughput / lowest latency** and can tolerate an occasional
-  over-thinking stall → **PrismaSCOUT + DFlash** (~2× tok/s).
+  over-thinking stall → **PrismaSCOUT + DFlash** (~2× tok/s), reasoning parser ON.
 - Want **reliability** for agentic loops where a stalled turn breaks the chain →
   **unsloth NVFP4 + MTP** was 100% dependable at ~21.6 tok/s.
-- Likely mitigation for PrismaSCOUT's stall: raise `DEFAULT_MAX_TOKENS` and/or
-  serve with `--no-reasoning-parser` so a long think can't silently truncate the
-  tool call — worth a follow-up test to keep DFlash's speed without the ~7% derail
-  rate.
+- The right lever for PrismaSCOUT's runaway-think stall is **raising the per-turn
+  token budget** (`DEFAULT_MAX_TOKENS` / client `max_tokens`) so a long think can
+  finish and still emit the tool call — **not** dropping the reasoning parser,
+  which (measured above) degrades tool calling.
 
 ---
 
