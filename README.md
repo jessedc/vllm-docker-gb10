@@ -4,6 +4,9 @@ A small, repeatable Docker build that **compiles vLLM from source** for this
 machine's GPU — the NVIDIA **GB10 Grace Blackwell** (compute capability
 **`sm_121a`**, `aarch64`, CUDA 13).
 
+> 📊 **Benchmark:** [Qwen3.6-27B NVFP4 multi-turn tool calling](benchmarks/qwen3.6-27b-tool-calling.md)
+> — unsloth (MTP) vs PrismaSCOUT (DFlash): throughput and tool-calling accuracy.
+
 ## Overview
 
 vLLM ships no `sm_121` wheels, so this project builds its own image and gives you
@@ -29,6 +32,8 @@ API is on `http://localhost:8000/v1`.
 | `run-qwen3.6.sh` | Tuned preset for `nvidia/Qwen3.6-35B-A3B-NVFP4` (MoE) | Single-purpose template |
 | `run-qwen3.6-27b.sh` | Tuned preset for `Qwen3.6-27B` dense (PrismaSCOUT NVFP4) + DFlash | Single-purpose template |
 | `download-qwen3.6-27b.sh` | Pre-fetches the 27B model + DFlash drafter into the HF cache | Helper for the preset above |
+| `run-qwen3.6-27b-nvfp4.sh` | Tuned preset for `unsloth/Qwen3.6-27B-NVFP4` (b12x cute-DSL, built-in MTP) | Single-purpose template |
+| `download-qwen3.6-27b-nvfp4.sh` | Pre-fetches the unsloth 27B NVFP4 checkpoint into the HF cache | Helper for the preset above |
 | `observability/` | One-command Prometheus + Grafana stack for the server's `/metrics` | Reusable across models |
 
 Everything targets `sm_121a` (GB10); building for a different GPU means changing
@@ -154,6 +159,64 @@ give requests generous `max_tokens` (2048+) or the reply is all reasoning.
 > crash-loop. It also streams the vLLM log and a 2-second host-memory trace to
 > `logs/` (gitignored) for post-mortem. Extra env knobs: `CACHE_HOME`, `LOG_DIR`,
 > `COMPILE_JOBS`, `MEM_LIMIT`, `RESTART`, `AUTOTUNE` (re-enable only at low util).
+
+#### Qwen3.6-27B unsloth NVFP4 (`run-qwen3.6-27b-nvfp4.sh`)
+
+A third preset serves **unsloth's** own NVFP4 quant, `unsloth/Qwen3.6-27B-NVFP4` —
+the dense, **multimodal** (image + video) `qwen3_5` checkpoint — following
+[unsloth's DGX Spark guide](https://unsloth.ai/docs/models/qwen3.6#dgx-spark-with-nvfp4-quants).
+Unlike the DFlash preset above it uses the model's **built-in MTP head** — **on by
+default** here (measured +79%, see below) — rather than an external drafter:
+
+```bash
+./download-qwen3.6-27b-nvfp4.sh      # fetch the checkpoint into the HF cache (~16 GB)
+./run-qwen3.6-27b-nvfp4.sh           # foreground, MTP spec decode (default; num_speculative_tokens=2)
+./run-qwen3.6-27b-nvfp4.sh --no-spec # disable MTP -> plain autoregressive decode
+./run-qwen3.6-27b-nvfp4.sh --no-reasoning-parser  # return the raw <think> trace in `content`
+DETACH=1 ./run-qwen3.6-27b-nvfp4.sh  # background server (RESTART=no by default)
+```
+
+> **Thinking / reasoning traces.** This model thinks by default, and its
+> `<think>` block alone can run 500+ tokens. Two gotchas, both handled: (1) the
+> `qwen3` reasoning parser *strips and discards* the thinking (`reasoning_content`
+> comes back `null`); and because it buffers until `</think>`, a **small client
+> `max_tokens` truncates mid-thought and returns an empty response**. The preset
+> sets `DEFAULT_MAX_TOKENS=4096` (a generation-config `max_new_tokens` default, env
+> overridable) so no-`max_tokens` clients finish thinking, and offers
+> **`--no-reasoning-parser`** to drop the parser so the raw `<think>…</think>answer`
+> is returned verbatim in `content` (the client splits it — tool calling still
+> works). If you don't want thinking at all, send
+> `chat_template_kwargs: {"enable_thinking": false}`. Note `preserve_thinking` only
+> affects how *past* turns are re-rendered, not the current response.
+
+NVFP4 is auto-detected (`compressed-tensors`), so there is no `--quantization`;
+the attention backend is **left to auto-pick** because forcing FlashInfer breaks
+this model's multimodal attention (same as gemma4). It inherits the full
+unified-memory safety machinery described above (`MAX_JOBS=2`, autotuner off,
+`CACHE_HOME` persistence, `--memory 112g`, `RESTART=no`, `logs/` memtrace).
+
+> **b12x, measured — read before trusting the guide's flags.** The guide tells
+> you to pass `--moe-backend flashinfer_b12x` "or get 2× slower inference." On
+> this **dense** checkpoint that flag is a **no-op** (there are no MoE layers) —
+> it's kept only for guide parity / a future MoE variant. The dense NVFP4 GEMM
+> auto-selects `FlashInferCutlassNvFp4LinearKernel` (cutlass), which is the best
+> available path and **not** the marlin W4A16 worst case. There is nothing faster
+> to force: `--linear-backend flashinfer_b12x` **hard-fails on boot** in this
+> build (no b12x linear kernel for the layer type). `CUTE_DSL_ARCH=sm_121a` is set
+> per the guide and is harmless. **Measured on the GB10:** single-stream decode is
+> ~**11 tok/s** (the Spark's memory-bandwidth ceiling for a 27B), rising to
+> ~**20 tok/s (+79%)** with the built-in MTP head — which keeps multi-turn tool
+> calling fully correct (`get_weather` → answer → `add` → answer verified), draft
+> acceptance ~65–80%. **MTP is therefore the default here**; pass `--no-spec` to
+> disable it (drops to ~11 tok/s, `--gpu-memory-utilization` 0.72 instead of 0.52).
+
+Verify the image supports the b12x (MoE) kernels (both should print `True`):
+
+```bash
+docker run --rm --gpus all --entrypoint python3 vllm-spark:latest -c \
+  "import torch; from vllm.utils.flashinfer import has_flashinfer_b12x_gemm as g, \
+   has_flashinfer_b12x_moe as m; print(torch.cuda.get_device_capability(), g(), m())"
+```
 
 ## Notes
 

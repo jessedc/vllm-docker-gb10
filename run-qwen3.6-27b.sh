@@ -55,14 +55,25 @@ mkdir -p "$HF_HOME" "$CACHE_HOME"
 # --- arg parsing -----------------------------------------------------------
 # Spec-decode mode: dflash (default) | mtp | none. Everything we don't recognise
 # passes straight through to `vllm serve`.
+# --no-reasoning-parser: drop `--reasoning-parser qwen3` so vLLM returns the raw
+# thinking verbatim in `content` (for a non-tool-calling client that splits it
+# itself, e.g. opencode). Mirrors run-qwen3.6-27b-nvfp4.sh.
+# !! DO NOT use this to "fix" the runaway-think truncation for tool calling: it
+#    makes tool calling WORSE, not better. Measured (benchmarks/qwen3.6-27b-tool-
+#    calling.md): without the reasoning channel the model rambles its plan in prose
+#    and often never emits the structured tool call — tool-selection accuracy fell
+#    93% -> 47% and tool calls halved. Keep the parser ON for agentic use; raise
+#    the per-turn token budget instead if a long think is truncating.
 SPEC=dflash
+NO_REASONING=0
 passthrough=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --dflash)  SPEC=dflash; shift ;;
-    --mtp)     SPEC=mtp;    shift ;;
-    --no-spec) SPEC=none;   shift ;;
-    *)         passthrough+=("$1"); shift ;;
+    --dflash)              SPEC=dflash; shift ;;
+    --mtp)                 SPEC=mtp;    shift ;;
+    --no-spec)             SPEC=none;   shift ;;
+    --no-reasoning-parser) NO_REASONING=1; shift ;;
+    *)                     passthrough+=("$1"); shift ;;
   esac
 done
 
@@ -94,7 +105,6 @@ vllm_args=(
   --load-format fastsafetensors           # confirmed installed in the image
   --enable-auto-tool-choice
   --tool-call-parser qwen3_coder
-  --reasoning-parser qwen3
   --generation-config vllm
   --override-generation-config '{"temperature":0.7,"top_p":0.8,"top_k":40,"presence_penalty":0.0,"repetition_penalty":1.0}'
 )
@@ -106,6 +116,12 @@ vllm_args=(
 # at ~0.65 util. Re-enable with AUTOTUNE=1 (only at low util, e.g. GPU_MEM_UTIL<=0.4).
 if [[ "${AUTOTUNE:-0}" != 1 ]]; then
   vllm_args+=(--no-enable-flashinfer-autotune)
+fi
+
+# Reasoning parser is ON by default (strips <think>...</think> from `content`).
+# --no-reasoning-parser omits it so the raw thinking is returned verbatim in content.
+if [[ "$NO_REASONING" != 1 ]]; then
+  vllm_args+=(--reasoning-parser qwen3)
 fi
 
 # Spec-decode config. dflash pulls the external drafter; mtp uses the in-model head.

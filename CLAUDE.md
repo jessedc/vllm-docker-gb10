@@ -107,3 +107,31 @@ Tracking `main` is the default and is bleeding-edge by design.
   + reasoning use the `gemma4` parsers and the in-image chat template at
   `/opt/vllm/examples/tool_chat_template_gemma4.jinja`; `--no-tools` disables all
   three. Needs the transformers-from-source build above.
+- `run-qwen3.6-27b-nvfp4.sh` serves `unsloth/Qwen3.6-27B-NVFP4` (dense,
+  multimodal `qwen3_5`) per unsloth's DGX Spark guide. NVFP4 is auto-detected
+  (`compressed-tensors`) so **no `--quantization`**, and `--attention-backend`
+  is **left to auto-pick** (multimodal; forcing flashinfer hits the same
+  rejection as gemma4). **b12x reality-check (measured, not the guide's
+  wording):** this checkpoint is **dense**, so the guide's `--moe-backend
+  flashinfer_b12x` is a **no-op here** (no MoE layers) — kept only for guide
+  parity / a future MoE variant. The dense NVFP4 GEMM auto-selects
+  `FlashInferCutlassNvFp4LinearKernel` (cutlass) — the best available path, **not**
+  the marlin W4A16 worst case. Do **not** pass `--linear-backend flashinfer_b12x`:
+  this build has no b12x *linear* kernel for the layer type and it **hard-fails on
+  boot**. `CUTE_DSL_ARCH=sm_121a` is set per the guide (harmless). Spec decode is
+  the model's **built-in MTP head** (`num_speculative_tokens=2`), not DFlash —
+  **on by default** (`--no-spec` disables it) because it **measured +79% decode
+  (11.3→20.2 tok/s) with tool calling intact**. MTP defaults `GPU_MEM_UTIL` to
+  0.52 (vs 0.72 for `--no-spec`). **Reasoning caveat:** the `qwen3` reasoning
+  parser *strips and discards* this checkpoint's `<think>…</think>` (leaves
+  `reasoning_content` null), and because it buffers until `</think>`, a small
+  client `max_tokens` truncates mid-thought → **empty response**. Mitigations
+  baked in: `DEFAULT_MAX_TOKENS=4096` (injected as generation-config
+  `max_new_tokens`) so no-max_tokens clients don't truncate, and
+  `--no-reasoning-parser` to drop the parser entirely so the raw
+  `<think>…</think>` is returned verbatim in `content` (client splits it itself;
+  tool calling is unaffected). Single-stream ~11 tok/s without MTP is the Spark's
+  memory-bandwidth ceiling for a 27B, not a misconfig. Image supports the b12x
+  (MoE) kernels at **flashinfer 0.6.12** (guide's ≥0.6.13 is conservative).
+  Distinct from `run-qwen3.6-27b.sh` (PrismaSCOUT + DFlash); reuses that script's
+  unified-memory OOM safety scaffolding verbatim.
