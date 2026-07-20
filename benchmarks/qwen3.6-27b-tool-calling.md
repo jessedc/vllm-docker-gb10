@@ -7,8 +7,8 @@ feeds the result back → repeat) and measuring both **throughput** and
 
 | Preset | Model | Spec decode |
 |--------|-------|-------------|
-| [`run-qwen3.6-27b-nvfp4.sh`](../run-qwen3.6-27b-nvfp4.sh) | `unsloth/Qwen3.6-27B-NVFP4` | built-in **MTP** head (default) |
-| [`run-qwen3.6-27b.sh`](../run-qwen3.6-27b.sh) | `rdtand/…PrismaSCOUT…NVFP4` | external **DFlash** drafter (default) |
+| [`run-qwen3.6-27b-unsloth.sh`](../run-qwen3.6-27b-unsloth.sh) | `unsloth/Qwen3.6-27B-NVFP4` | built-in **MTP** head (default) |
+| [`run-qwen3.6-27b-prismascout.sh`](../run-qwen3.6-27b-prismascout.sh) | `rdtand/…PrismaSCOUT…NVFP4` | external **DFlash** drafter (default) |
 
 Both were served with **their script defaults** (sampling, spec-decode, memory
 util — nothing overridden) on the GB10 / sm_121a, one at a time on `:8000`.
@@ -17,7 +17,7 @@ util — nothing overridden) on the GB10 / sm_121a, one at a time on `:8000`.
 
 ```bash
 # 1. serve one preset (warm caches → ~150 s to ready, no OOM)
-DETACH=1 ./run-qwen3.6-27b-nvfp4.sh          # or ./run-qwen3.6-27b.sh
+DETACH=1 ./run-qwen3.6-27b-unsloth.sh          # or ./run-qwen3.6-27b-prismascout.sh
 
 # 2. run the harness (auto-detects the served model id)
 python3 benchmarks/toolbench.py --trials 3 --out benchmarks/results-x.json

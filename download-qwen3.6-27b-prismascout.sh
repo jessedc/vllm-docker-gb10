@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Pre-fetch the Qwen3.6-27B *dense* checkpoint + the DFlash drafter into the HF
-# cache, so run-qwen3.6-27b.sh can serve them without a cold download at startup.
+# cache, so run-qwen3.6-27b-prismascout.sh can serve them without a cold download at startup.
 #
 # Runs `hf download` *inside* the vllm-spark image, so the host needs nothing
 # installed (the image already ships the `hf` CLI + huggingface_hub).
 #
 # Usage:
-#   ./download-qwen3.6-27b.sh
+#   ./download-qwen3.6-27b-prismascout.sh
 #
 # Env:
 #   IMAGE         image to use            (default: vllm-spark:latest)

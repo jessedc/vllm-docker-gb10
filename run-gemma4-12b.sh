@@ -8,10 +8,10 @@
 # quantized"); the vision/audio embedders are left unquantized.
 #
 # Usage:
-#   ./run-gemma4.sh                       # foreground (Ctrl-C to stop)
-#   ./run-gemma4.sh --no-tools            # disable tool-calling / reasoning parsing
-#   DETACH=1 ./run-gemma4.sh              # background server, restarts on boot
-#   ./run-gemma4.sh --max-num-seqs 8      # append/override any vllm serve flag
+#   ./run-gemma4-12b.sh                       # foreground (Ctrl-C to stop)
+#   ./run-gemma4-12b.sh --no-tools            # disable tool-calling / reasoning parsing
+#   DETACH=1 ./run-gemma4-12b.sh              # background server, restarts on boot
+#   ./run-gemma4-12b.sh --max-num-seqs 8      # append/override any vllm serve flag
 #
 # Env: IMAGE, PORT (host), HF_TOKEN, HF_HOME, GPU_MEM_UTIL, MAX_MODEL_LEN.
 set -euo pipefail

@@ -3,10 +3,10 @@
 # locally built from-source vLLM image (vllm-spark:latest).
 #
 # Usage:
-#   ./run-qwen3.6.sh                 # foreground (Ctrl-C to stop)
-#   ./run-qwen3.6.sh --mtp           # enable MTP speculative decoding (off by default)
-#   DETACH=1 ./run-qwen3.6.sh        # background server, restarts on boot
-#   ./run-qwen3.6.sh --max-num-seqs 8   # append/override any vllm serve flag
+#   ./run-qwen3.6-35b-a3b.sh                 # foreground (Ctrl-C to stop)
+#   ./run-qwen3.6-35b-a3b.sh --mtp           # enable MTP speculative decoding (off by default)
+#   DETACH=1 ./run-qwen3.6-35b-a3b.sh        # background server, restarts on boot
+#   ./run-qwen3.6-35b-a3b.sh --max-num-seqs 8   # append/override any vllm serve flag
 #
 # Env: IMAGE, PORT (host), HF_TOKEN, HF_HOME.
 set -euo pipefail

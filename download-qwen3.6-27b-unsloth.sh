@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Pre-fetch the unsloth Qwen3.6-27B-NVFP4 checkpoint into the HF cache, so
-# run-qwen3.6-27b-nvfp4.sh can serve it without a cold download at startup.
+# run-qwen3.6-27b-unsloth.sh can serve it without a cold download at startup.
 #
 # Runs `hf download` *inside* the vllm-spark image, so the host needs nothing
 # installed (the image already ships the `hf` CLI + huggingface_hub).
 #
 # Usage:
-#   ./download-qwen3.6-27b-nvfp4.sh
+#   ./download-qwen3.6-27b-unsloth.sh
 #
 # Env:
 #   IMAGE       image to use            (default: vllm-spark:latest)

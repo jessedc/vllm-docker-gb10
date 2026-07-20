@@ -3,7 +3,7 @@
 # locally built from-source vLLM image (vllm-spark:latest), with DFlash
 # speculative decoding by default.
 #
-# This is the 27B-dense sibling of run-qwen3.6.sh (which serves the 35B-A3B MoE).
+# This is the 27B-dense sibling of run-qwen3.6-35b-a3b.sh (which serves the 35B-A3B MoE).
 # Translated from a community docker-compose (qwen36-27b-notes.md), with two
 # deliberate changes for *our* mainline-from-source image:
 #   * aeon-vllm-ultimate-only env vars dropped — VLLM_NVFP4_GEMM_BACKEND,
@@ -15,7 +15,7 @@
 # DFlash + the PrismaSCOUT body are co-designed: the small NVFP4 body reclaims the
 # VRAM that the block-diffusion drafter spends on block verification.
 #
-# Run ./download-qwen3.6-27b.sh once first to populate the HF cache.
+# Run ./download-qwen3.6-27b-prismascout.sh once first to populate the HF cache.
 #
 # !! UNIFIED-MEMORY SAFETY (learned the hard way — see logs/crash-*.vllm.log) !!
 # The Spark's 121 GB is shared by GPU *and* host. On a model's FIRST boot, flashinfer
@@ -30,11 +30,11 @@
 # After the first successful (cache-warming) boot you can safely raise MAX_MODEL_LEN.
 #
 # Usage:
-#   ./run-qwen3.6-27b.sh                 # foreground, DFlash spec decode (default)
-#   ./run-qwen3.6-27b.sh --mtp           # use the model's built-in MTP head instead
-#   ./run-qwen3.6-27b.sh --no-spec       # plain autoregressive decode, no drafter
-#   DETACH=1 ./run-qwen3.6-27b.sh        # background server (RESTART=no by default)
-#   ./run-qwen3.6-27b.sh --max-num-seqs 8   # append/override any vllm serve flag
+#   ./run-qwen3.6-27b-prismascout.sh                 # foreground, DFlash spec decode (default)
+#   ./run-qwen3.6-27b-prismascout.sh --mtp           # use the model's built-in MTP head instead
+#   ./run-qwen3.6-27b-prismascout.sh --no-spec       # plain autoregressive decode, no drafter
+#   DETACH=1 ./run-qwen3.6-27b-prismascout.sh        # background server, runs until stopped (RESTART=unless-stopped)
+#   ./run-qwen3.6-27b-prismascout.sh --max-num-seqs 8   # append/override any vllm serve flag
 #
 # Env: IMAGE, PORT, HF_TOKEN, HF_HOME, GPU_MEM_UTIL, MAX_NUM_SEQS, MAX_MODEL_LEN,
 #      SPEC_TOKENS, CHAT_TEMPLATE, CACHE_HOME, LOG_DIR, COMPILE_JOBS, MEM_LIMIT,
@@ -57,7 +57,7 @@ mkdir -p "$HF_HOME" "$CACHE_HOME"
 # passes straight through to `vllm serve`.
 # --no-reasoning-parser: drop `--reasoning-parser qwen3` so vLLM returns the raw
 # thinking verbatim in `content` (for a non-tool-calling client that splits it
-# itself, e.g. opencode). Mirrors run-qwen3.6-27b-nvfp4.sh.
+# itself, e.g. opencode). Mirrors run-qwen3.6-27b-unsloth.sh.
 # !! DO NOT use this to "fix" the runaway-think truncation for tool calling: it
 #    makes tool calling WORSE, not better. Measured (benchmarks/qwen3.6-27b-tool-
 #    calling.md): without the reasoning channel the model rambles its plan in prose
@@ -196,9 +196,13 @@ echo ">>> mem trace:  $MEM_LOG"
 echo ">>> compile:    MAX_JOBS=${COMPILE_JOBS:-2}  mem-cap=${MEM_LIMIT:-none}  cache=$CACHE_HOME"
 
 if [[ "${DETACH:-0}" == 1 ]]; then
-  # RESTART defaults to "no": a model that can OOM the host on a cold compile must
-  # not auto-restart into a crash loop after a reboot. Opt back in with RESTART=unless-stopped.
-  docker_flags+=(-d --name "$NAME" --restart "${RESTART:-no}")
+  # RESTART defaults to "unless-stopped": run until explicitly stopped, surviving
+  # crashes and host reboots. NOTE the first-boot caveat — a model that can OOM the
+  # host on a *cold* compile could crash-loop under this policy; the JIT/autotune
+  # cache is persisted (CACHE_HOME) precisely so that compile is paid once and warm
+  # thereafter, so keep the cache warm before relying on auto-restart. Set RESTART=no
+  # to disable auto-restart (e.g. for the very first cache-warming boot).
+  docker_flags+=(-d --name "$NAME" --restart "${RESTART:-unless-stopped}")
   run=(docker run "${docker_flags[@]}" "$IMAGE" "${vllm_args[@]}" "${passthrough[@]+"${passthrough[@]}"}")
   set -x
   "${run[@]}"

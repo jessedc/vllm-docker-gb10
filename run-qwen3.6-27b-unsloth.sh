@@ -4,7 +4,7 @@
 # DGX Spark guide:
 #   https://unsloth.ai/docs/models/qwen3.6#dgx-spark-with-nvfp4-quants
 #
-# This is the unsloth-NVFP4 sibling of run-qwen3.6-27b.sh (which serves the
+# This is the unsloth-NVFP4 sibling of run-qwen3.6-27b-prismascout.sh (which serves the
 # rdtand PrismaSCOUT body + z-lab DFlash drafter). The two are DIFFERENT 27B
 # models: this one is unsloth's own compressed-tensors NVFP4 quant of the dense,
 # *multimodal* qwen3_5 checkpoint, and it uses the model's built-in MTP head
@@ -36,7 +36,7 @@
 #     "import torch; from vllm.utils.flashinfer import has_flashinfer_b12x_gemm as g, \
 #      has_flashinfer_b12x_moe as m; print(torch.cuda.get_device_capability(), g(), m())"
 #
-# Run ./download-qwen3.6-27b-nvfp4.sh once first to populate the HF cache.
+# Run ./download-qwen3.6-27b-unsloth.sh once first to populate the HF cache.
 #
 # !! UNIFIED-MEMORY SAFETY (learned the hard way — see logs/crash-*.vllm.log) !!
 # The Spark's 121 GB is shared by GPU *and* host. On a model's FIRST boot, flashinfer
@@ -51,12 +51,12 @@
 # After the first successful (cache-warming) boot you can safely raise MAX_MODEL_LEN.
 #
 # Usage:
-#   ./run-qwen3.6-27b-nvfp4.sh              # foreground, MTP spec decode (DEFAULT; measured +79%)
-#   ./run-qwen3.6-27b-nvfp4.sh --no-spec    # disable MTP -> plain autoregressive decode
-#   ./run-qwen3.6-27b-nvfp4.sh --mtp        # explicit MTP (same as default)
-#   ./run-qwen3.6-27b-nvfp4.sh --no-reasoning-parser  # return raw <think> in content
-#   DETACH=1 ./run-qwen3.6-27b-nvfp4.sh     # background server (RESTART=no by default)
-#   ./run-qwen3.6-27b-nvfp4.sh --max-num-seqs 8   # append/override any vllm serve flag
+#   ./run-qwen3.6-27b-unsloth.sh              # foreground, MTP spec decode (DEFAULT; measured +79%)
+#   ./run-qwen3.6-27b-unsloth.sh --no-spec    # disable MTP -> plain autoregressive decode
+#   ./run-qwen3.6-27b-unsloth.sh --mtp        # explicit MTP (same as default)
+#   ./run-qwen3.6-27b-unsloth.sh --no-reasoning-parser  # return raw <think> in content
+#   DETACH=1 ./run-qwen3.6-27b-unsloth.sh     # background server (RESTART=no by default)
+#   ./run-qwen3.6-27b-unsloth.sh --max-num-seqs 8   # append/override any vllm serve flag
 #
 # Env: IMAGE, PORT, HF_TOKEN, HF_HOME, GPU_MEM_UTIL, MAX_NUM_SEQS, MAX_MODEL_LEN,
 #      DEFAULT_MAX_TOKENS (default 4096), SPEC_TOKENS, CHAT_TEMPLATE, CACHE_HOME,

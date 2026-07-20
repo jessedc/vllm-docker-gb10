@@ -23,8 +23,8 @@ vLLM's source is cloned *inside* the image at build time.
 ./run.sh                                 # serve default small model (Qwen3-4B), interactive
 ./run.sh Qwen/Qwen3-8B --max-model-len 32768   # serve a model; extra flags pass to `vllm serve`
 DETACH=1 ./run.sh Qwen/Qwen3-8B          # detached server, restarts on boot
-./run-qwen3.6.sh [--mtp]                 # tuned preset for nvidia/Qwen3.6-35B-A3B-NVFP4
-./run-gemma4.sh [--no-tools]             # tuned preset for RedHatAI/gemma-4-12B-it-NVFP4 (multimodal)
+./run-qwen3.6-35b-a3b.sh [--mtp]                 # tuned preset for nvidia/Qwen3.6-35B-A3B-NVFP4
+./run-gemma4-12b.sh [--no-tools]             # tuned preset for RedHatAI/gemma-4-12B-it-NVFP4 (multimodal)
 
 (cd observability && docker compose up -d) # Prometheus + Grafana on the server's /metrics (localhost:3000)
 ```
@@ -39,7 +39,7 @@ Two layers, deliberately separated:
 
 - **Build layer** (`Dockerfile`, `build.sh`, `build.lock`) — the reusable core.
   Works for any vLLM version on any sm_121a Spark.
-- **Serve layer** (`run.sh` generic, `run-qwen3.6.sh` tuned preset) — launches the
+- **Serve layer** (`run.sh` generic, `run-qwen3.6-35b-a3b.sh` tuned preset) — launches the
   built image as the API server. These currently duplicate the `docker run`
   plumbing (gpus/ipc/port/HF-cache mount, DETACH handling); the intended
   refactor is a shared `_serve.sh` helper taking a model id + `vllm_args` array.
@@ -90,13 +90,13 @@ Tracking `main` is the default and is bleeding-edge by design.
 
 - `run.sh` env knobs: `IMAGE`, `PORT`, `HF_HOME`, `HF_TOKEN`, `GPU_MEM_UTIL`
   (default 0.85), `MAX_NUM_SEQS`, `DETACH`.
-- `run-qwen3.6.sh` lets the checkpoint's `config.json` **auto-detect** NVFP4
+- `run-qwen3.6-35b-a3b.sh` lets the checkpoint's `config.json` **auto-detect** NVFP4
   quantization — do **not** force `--quantization modelopt` (that selects the FP8
   path, wrong for this NVFP4 model; use `modelopt_fp4` if forcing). MTP
   speculative decoding is **opt-in** via `--mtp`; the script consumes `--mtp` and
   passes every other flag straight through to `vllm serve`. Sampling values set
   via `--override-generation-config` are server-side **defaults** only.
-- `run-gemma4.sh` serves the unified multimodal `gemma4_unified` checkpoint
+- `run-gemma4-12b.sh` serves the unified multimodal `gemma4_unified` checkpoint
   (text+image+audio). Gotchas baked in: (1) do **not** force
   `--attention-backend flashinfer` — the model's bidirectional multimodal
   attention is rejected ("partial multimodal token full attention not
@@ -107,7 +107,7 @@ Tracking `main` is the default and is bleeding-edge by design.
   + reasoning use the `gemma4` parsers and the in-image chat template at
   `/opt/vllm/examples/tool_chat_template_gemma4.jinja`; `--no-tools` disables all
   three. Needs the transformers-from-source build above.
-- `run-qwen3.6-27b-nvfp4.sh` serves `unsloth/Qwen3.6-27B-NVFP4` (dense,
+- `run-qwen3.6-27b-unsloth.sh` serves `unsloth/Qwen3.6-27B-NVFP4` (dense,
   multimodal `qwen3_5`) per unsloth's DGX Spark guide. NVFP4 is auto-detected
   (`compressed-tensors`) so **no `--quantization`**, and `--attention-backend`
   is **left to auto-pick** (multimodal; forcing flashinfer hits the same
@@ -133,5 +133,5 @@ Tracking `main` is the default and is bleeding-edge by design.
   tool calling is unaffected). Single-stream ~11 tok/s without MTP is the Spark's
   memory-bandwidth ceiling for a 27B, not a misconfig. Image supports the b12x
   (MoE) kernels at **flashinfer 0.6.12** (guide's ≥0.6.13 is conservative).
-  Distinct from `run-qwen3.6-27b.sh` (PrismaSCOUT + DFlash); reuses that script's
+  Distinct from `run-qwen3.6-27b-prismascout.sh` (PrismaSCOUT + DFlash); reuses that script's
   unified-memory OOM safety scaffolding verbatim.

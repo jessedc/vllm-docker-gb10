@@ -16,9 +16,9 @@ scripts to serve models with it. There are two layers:
   kernels for the GB10 on top of the official CUDA 13 nightly base, and records
   exactly what it built so the image is reproducible. This is the reusable core:
   it works for any vLLM version on any sm_121a Spark.
-- **Serve layer** (`run.sh`, `run-qwen3.6.sh`) — launches the built image as an
+- **Serve layer** (`run.sh`, `run-qwen3.6-35b-a3b.sh`) — launches the built image as an
   OpenAI-compatible API server. `run.sh` is generic (model passed as an
-  argument); `run-qwen3.6.sh` is a tuned preset for one specific large model.
+  argument); `run-qwen3.6-35b-a3b.sh` is a tuned preset for one specific large model.
 
 A typical first run is: `./build.sh` then `./run.sh Qwen/Qwen3-8B`, after which the
 API is on `http://localhost:8000/v1`.
@@ -29,11 +29,11 @@ API is on `http://localhost:8000/v1`.
 | `build.sh` | Build driver — resolves pins, tags image, writes `build.lock` | Reusable |
 | `build.lock` | Provenance pin for `--reproduce` | Reproducible |
 | `run.sh` | Generic launcher — serve any HF model | Reusable across models |
-| `run-qwen3.6.sh` | Tuned preset for `nvidia/Qwen3.6-35B-A3B-NVFP4` (MoE) | Single-purpose template |
-| `run-qwen3.6-27b.sh` | Tuned preset for `Qwen3.6-27B` dense (PrismaSCOUT NVFP4) + DFlash | Single-purpose template |
-| `download-qwen3.6-27b.sh` | Pre-fetches the 27B model + DFlash drafter into the HF cache | Helper for the preset above |
-| `run-qwen3.6-27b-nvfp4.sh` | Tuned preset for `unsloth/Qwen3.6-27B-NVFP4` (b12x cute-DSL, built-in MTP) | Single-purpose template |
-| `download-qwen3.6-27b-nvfp4.sh` | Pre-fetches the unsloth 27B NVFP4 checkpoint into the HF cache | Helper for the preset above |
+| `run-qwen3.6-35b-a3b.sh` | Tuned preset for `nvidia/Qwen3.6-35B-A3B-NVFP4` (MoE) | Single-purpose template |
+| `run-qwen3.6-27b-prismascout.sh` | Tuned preset for `Qwen3.6-27B` dense (PrismaSCOUT NVFP4) + DFlash | Single-purpose template |
+| `download-qwen3.6-27b-prismascout.sh` | Pre-fetches the 27B model + DFlash drafter into the HF cache | Helper for the preset above |
+| `run-qwen3.6-27b-unsloth.sh` | Tuned preset for `unsloth/Qwen3.6-27B-NVFP4` (b12x cute-DSL, built-in MTP) | Single-purpose template |
+| `download-qwen3.6-27b-unsloth.sh` | Pre-fetches the unsloth 27B NVFP4 checkpoint into the HF cache | Helper for the preset above |
 | `observability/` | One-command Prometheus + Grafana stack for the server's `/metrics` | Reusable across models |
 
 Everything targets `sm_121a` (GB10); building for a different GPU means changing
@@ -102,15 +102,15 @@ Tunables via env: `IMAGE`, `PORT`, `HF_HOME`, `GPU_MEM_UTIL`, `MAX_NUM_SEQS`.
 
 `run.sh` is generic. For a model that needs specific, repeatable tuning, a
 dedicated launcher captures the whole flag set in one place — see
-`run-qwen3.6.sh`, which serves `nvidia/Qwen3.6-35B-A3B-NVFP4` with NVFP4 quant
+`run-qwen3.6-35b-a3b.sh`, which serves `nvidia/Qwen3.6-35B-A3B-NVFP4` with NVFP4 quant
 auto-detect, FP8 KV cache, FlashInfer attention, Marlin MoE, 256K context, a
 `0.65` memory-utilization default, and Qwen3's recommended sampling defaults:
 
 ```bash
-./run-qwen3.6.sh                  # foreground (Ctrl-C to stop)
-./run-qwen3.6.sh --mtp            # enable MTP speculative decoding (off by default)
-DETACH=1 ./run-qwen3.6.sh         # detached server, restarts on boot
-./run-qwen3.6.sh --max-num-seqs 8 # append/override any vllm serve flag
+./run-qwen3.6-35b-a3b.sh                  # foreground (Ctrl-C to stop)
+./run-qwen3.6-35b-a3b.sh --mtp            # enable MTP speculative decoding (off by default)
+DETACH=1 ./run-qwen3.6-35b-a3b.sh         # detached server, restarts on boot
+./run-qwen3.6-35b-a3b.sh --max-num-seqs 8 # append/override any vllm serve flag
 ```
 
 MTP speculative decoding is **opt-in** via `--mtp`; without it, no
@@ -122,7 +122,7 @@ Sampling defaults (`temperature`, `top_p`, `top_k`, `min_p`, `presence_penalty`,
 server-side **defaults** — a request that sets a field still overrides them, so a
 client should send these values explicitly (or omit them) to keep them in effect.
 
-#### Qwen3.6-27B dense + DFlash (`run-qwen3.6-27b.sh`)
+#### Qwen3.6-27B dense + DFlash (`run-qwen3.6-27b-prismascout.sh`)
 
 A second preset serves the **dense** `Qwen3.6-27B` — specifically the
 `rdtand/Qwen3.6-27B-PrismaSCOUT-Blackwell-NVFP4-BF16-vllm` mixed-precision NVFP4
@@ -130,11 +130,11 @@ checkpoint — with **DFlash** speculative decoding (the `z-lab/Qwen3.6-27B-DFla
 block-diffusion drafter). Run the downloader once, then launch:
 
 ```bash
-./download-qwen3.6-27b.sh          # fetch model + drafter into the HF cache (~24 GB)
-./run-qwen3.6-27b.sh               # foreground, DFlash spec decode (default)
-./run-qwen3.6-27b.sh --mtp         # use the model's built-in MTP head instead
-./run-qwen3.6-27b.sh --no-spec     # plain decode, no drafter
-DETACH=1 ./run-qwen3.6-27b.sh      # background server (RESTART=no by default)
+./download-qwen3.6-27b-prismascout.sh          # fetch model + drafter into the HF cache (~24 GB)
+./run-qwen3.6-27b-prismascout.sh               # foreground, DFlash spec decode (default)
+./run-qwen3.6-27b-prismascout.sh --mtp         # use the model's built-in MTP head instead
+./run-qwen3.6-27b-prismascout.sh --no-spec     # plain decode, no drafter
+DETACH=1 ./run-qwen3.6-27b-prismascout.sh      # background server, runs until stopped (RESTART=unless-stopped)
 ```
 
 Defaults: `262144` context, `--gpu-memory-utilization 0.65`, FlashInfer
@@ -154,13 +154,15 @@ give requests generous `max_tokens` (2048+) or the reply is all reasoning.
 > crashes the whole machine (it did, twice, during bring-up). The script defends
 > against this by default: it caps the JIT compiler (`MAX_JOBS=2`), disables the
 > `fp4_gemm` autotuner (`--no-enable-flashinfer-autotune`, the ~38 GiB offender),
-> persists `/root/.cache` via `CACHE_HOME` so the compile is paid once, adds a
-> `--memory 112g` cgroup backstop, and defaults `RESTART=no` so a bad boot can't
+> persists `/root/.cache` via `CACHE_HOME` so the compile is paid once, and adds a
+> `--memory 112g` cgroup backstop. This preset defaults `RESTART=unless-stopped` so
+> the detached server runs until explicitly stopped (surviving crashes/reboots);
+> set `RESTART=no` for the very first cold-cache boot so a bad compile can't
 > crash-loop. It also streams the vLLM log and a 2-second host-memory trace to
 > `logs/` (gitignored) for post-mortem. Extra env knobs: `CACHE_HOME`, `LOG_DIR`,
 > `COMPILE_JOBS`, `MEM_LIMIT`, `RESTART`, `AUTOTUNE` (re-enable only at low util).
 
-#### Qwen3.6-27B unsloth NVFP4 (`run-qwen3.6-27b-nvfp4.sh`)
+#### Qwen3.6-27B unsloth NVFP4 (`run-qwen3.6-27b-unsloth.sh`)
 
 A third preset serves **unsloth's** own NVFP4 quant, `unsloth/Qwen3.6-27B-NVFP4` —
 the dense, **multimodal** (image + video) `qwen3_5` checkpoint — following
@@ -169,11 +171,11 @@ Unlike the DFlash preset above it uses the model's **built-in MTP head** — **o
 default** here (measured +79%, see below) — rather than an external drafter:
 
 ```bash
-./download-qwen3.6-27b-nvfp4.sh      # fetch the checkpoint into the HF cache (~16 GB)
-./run-qwen3.6-27b-nvfp4.sh           # foreground, MTP spec decode (default; num_speculative_tokens=2)
-./run-qwen3.6-27b-nvfp4.sh --no-spec # disable MTP -> plain autoregressive decode
-./run-qwen3.6-27b-nvfp4.sh --no-reasoning-parser  # return the raw <think> trace in `content`
-DETACH=1 ./run-qwen3.6-27b-nvfp4.sh  # background server (RESTART=no by default)
+./download-qwen3.6-27b-unsloth.sh      # fetch the checkpoint into the HF cache (~16 GB)
+./run-qwen3.6-27b-unsloth.sh           # foreground, MTP spec decode (default; num_speculative_tokens=2)
+./run-qwen3.6-27b-unsloth.sh --no-spec # disable MTP -> plain autoregressive decode
+./run-qwen3.6-27b-unsloth.sh --no-reasoning-parser  # return the raw <think> trace in `content`
+DETACH=1 ./run-qwen3.6-27b-unsloth.sh  # background server (RESTART=no by default)
 ```
 
 > **Thinking / reasoning traces.** This model thinks by default, and its
@@ -241,7 +243,7 @@ docker run --rm --gpus all --entrypoint python3 vllm-spark:latest -c \
 
 ## Future plans
 
-`run.sh` and `run-qwen3.6.sh` currently duplicate the same Docker plumbing
+`run.sh` and `run-qwen3.6-35b-a3b.sh` currently duplicate the same Docker plumbing
 (`docker run` flags, detach/restart handling, HF cache mount, port mapping). As
 soon as a second tuned preset appears, that copy-paste becomes a maintenance
 hazard.
@@ -249,6 +251,6 @@ hazard.
 The plan is to factor the shared boilerplate into a small helper — e.g. a
 `_serve.sh` that takes a model id plus a `vllm_args` array and handles the Docker
 invocation — leaving each per-model launcher as just its tuned `vllm_args`. That
-keeps the generic path (`run.sh`) and the presets (`run-qwen3.6.sh` and future
+keeps the generic path (`run.sh`) and the presets (`run-qwen3.6-35b-a3b.sh` and future
 siblings) sharing one code path, so a fix to the run logic lands everywhere at
 once.
