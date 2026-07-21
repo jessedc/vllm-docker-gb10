@@ -19,257 +19,12 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": null,
+  "id": 47,
   "links": [],
   "panels": [
     {
-      "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
-      "id": 100,
-      "panels": [],
-      "title": "Totals",
-      "type": "row"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "description": "Total input (prompt) tokens over the selected time range.",
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "thresholds" },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
-      "id": 101,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "11.3.0",
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "editorMode": "code",
-          "expr": "sum(increase(vllm:prompt_tokens_total{model_name=~\"$Deployment_id\"}[$__range]))",
-          "instant": true,
-          "legendFormat": "__auto",
-          "range": false,
-          "refId": "A"
-        }
-      ],
-      "title": "Total Input Tokens",
-      "type": "stat"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "description": "Total output (generation) tokens over the selected time range.",
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "thresholds" },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 },
-      "id": 102,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "11.3.0",
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "editorMode": "code",
-          "expr": "sum(increase(vllm:generation_tokens_total{model_name=~\"$Deployment_id\"}[$__range]))",
-          "instant": true,
-          "legendFormat": "__auto",
-          "range": false,
-          "refId": "A"
-        }
-      ],
-      "title": "Total Output Tokens",
-      "type": "stat"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "description": "Total input + output tokens over the selected time range.",
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "thresholds" },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
-      "id": 103,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "11.3.0",
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "editorMode": "code",
-          "expr": "sum(increase(vllm:prompt_tokens_total{model_name=~\"$Deployment_id\"}[$__range])) + sum(increase(vllm:generation_tokens_total{model_name=~\"$Deployment_id\"}[$__range]))",
-          "instant": true,
-          "legendFormat": "__auto",
-          "range": false,
-          "refId": "A"
-        }
-      ],
-      "title": "Total Tokens",
-      "type": "stat"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "description": "Total successful requests over the selected time range.",
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "thresholds" },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
-      "id": 104,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "11.3.0",
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "editorMode": "code",
-          "expr": "sum(increase(vllm:request_success_total{model_name=~\"$Deployment_id\"}[$__range]))",
-          "instant": true,
-          "legendFormat": "__auto",
-          "range": false,
-          "refId": "A"
-        }
-      ],
-      "title": "Total Requests",
-      "type": "stat"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "description": "Cumulative input and output tokens over time (stacked; total height = all tokens). Resets to zero when the server restarts.",
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 25,
-            "gradientMode": "none",
-            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": { "type": "linear" },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": { "group": "A", "mode": "normal" },
-            "thresholdsStyle": { "mode": "off" }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 5 },
-      "id": 105,
-      "options": {
-        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
-        "tooltip": { "mode": "single", "sort": "none" }
-      },
-      "pluginVersion": "11.3.0",
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "editorMode": "code",
-          "expr": "sum(vllm:prompt_tokens_total{model_name=~\"$Deployment_id\"})",
-          "legendFormat": "Input",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "editorMode": "code",
-          "expr": "sum(vllm:generation_tokens_total{model_name=~\"$Deployment_id\"})",
-          "legendFormat": "Output",
-          "range": true,
-          "refId": "B"
-        }
-      ],
-      "title": "Cumulative Tokens Over Time",
-      "type": "timeseries"
-    },
-    {
       "collapsed": true,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
       "id": 20,
       "panels": [],
       "title": "Request Over Time",
@@ -311,7 +66,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 6, "w": 10, "x": 0, "y": 14 },
+      "gridPos": { "h": 6, "w": 10, "x": 0, "y": 1 },
       "id": 1,
       "options": {
         "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
@@ -346,7 +101,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 3, "w": 7, "x": 10, "y": 14 },
+      "gridPos": { "h": 3, "w": 7, "x": 10, "y": 1 },
       "id": 2,
       "options": {
         "colorMode": "value",
@@ -388,7 +143,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 3, "w": 7, "x": 17, "y": 14 },
+      "gridPos": { "h": 3, "w": 7, "x": 17, "y": 1 },
       "id": 3,
       "options": {
         "colorMode": "value",
@@ -430,7 +185,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 3, "w": 7, "x": 10, "y": 17 },
+      "gridPos": { "h": 3, "w": 7, "x": 10, "y": 4 },
       "id": 4,
       "options": {
         "colorMode": "value",
@@ -472,7 +227,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 3, "w": 7, "x": 17, "y": 17 },
+      "gridPos": { "h": 3, "w": 7, "x": 17, "y": 4 },
       "id": 5,
       "options": {
         "colorMode": "value",
@@ -500,7 +255,7 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 20 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 7 },
       "id": 19,
       "panels": [],
       "title": "Size Distribution",
@@ -527,7 +282,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 6, "w": 10, "x": 0, "y": 21 },
+      "gridPos": { "h": 6, "w": 10, "x": 0, "y": 8 },
       "id": 6,
       "options": {
         "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
@@ -562,7 +317,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 3, "w": 7, "x": 10, "y": 21 },
+      "gridPos": { "h": 3, "w": 7, "x": 10, "y": 8 },
       "id": 9,
       "options": {
         "colorMode": "value",
@@ -604,7 +359,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 3, "w": 7, "x": 17, "y": 21 },
+      "gridPos": { "h": 3, "w": 7, "x": 17, "y": 8 },
       "id": 8,
       "options": {
         "colorMode": "value",
@@ -646,7 +401,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 3, "w": 7, "x": 10, "y": 24 },
+      "gridPos": { "h": 3, "w": 7, "x": 10, "y": 11 },
       "id": 7,
       "options": {
         "colorMode": "value",
@@ -688,7 +443,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 3, "w": 7, "x": 17, "y": 24 },
+      "gridPos": { "h": 3, "w": 7, "x": 17, "y": 11 },
       "id": 10,
       "options": {
         "colorMode": "value",
@@ -716,7 +471,7 @@
     },
     {
       "collapsed": true,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
       "id": 18,
       "panels": [],
       "title": "Input Token Over Time",
@@ -758,7 +513,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 6, "w": 10, "x": 0, "y": 28 },
+      "gridPos": { "h": 6, "w": 10, "x": 0, "y": 15 },
       "id": 11,
       "options": {
         "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
@@ -793,7 +548,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 3, "w": 7, "x": 10, "y": 28 },
+      "gridPos": { "h": 3, "w": 7, "x": 10, "y": 15 },
       "id": 12,
       "options": {
         "colorMode": "value",
@@ -821,7 +576,7 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 34 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 21 },
       "id": 17,
       "panels": [],
       "title": "Output Token Over Time",
@@ -863,7 +618,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 6, "w": 10, "x": 0, "y": 35 },
+      "gridPos": { "h": 6, "w": 10, "x": 0, "y": 22 },
       "id": 13,
       "options": {
         "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
@@ -898,7 +653,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 3, "w": 7, "x": 10, "y": 35 },
+      "gridPos": { "h": 3, "w": 7, "x": 10, "y": 22 },
       "id": 14,
       "options": {
         "colorMode": "value",

@@ -59,7 +59,7 @@ FROM vllm/vllm-openai:cu130-nightly   # pinned by digest -> torch 2.11+cu130, nv
 
 > **Verified:** this builds clean and serves — confirmed by compiling all
 > kernels for `compute_121a/sm_121a`, importing the from-source `vllm._C`, and
-> serving a completion on the GB10 (`torch 2.11.0+cu130`, `flashinfer 0.6.12`).
+> serving a completion on the GB10 (`torch 2.11.0+cu130`, `flashinfer 0.6.14`).
 
 ## Build
 
@@ -137,11 +137,17 @@ block-diffusion drafter). Run the downloader once, then launch:
 DETACH=1 ./run-qwen3.6-27b-prismascout.sh      # background server, runs until stopped (RESTART=unless-stopped)
 ```
 
-Defaults: `262144` context, `--gpu-memory-utilization 0.65`, FlashInfer
-attention, `--mamba-block-size 256` (the model is GDN-hybrid), and the qwen3
-reasoning + qwen3_coder tool-call parsers. Validated on the GB10: DFlash runs at
-~51% draft acceptance (~5.1 accepted tokens/cycle), and at 262K context the KV
-pool (~561K tokens) gives ~2.14× concurrency. The settings translate a community
+Defaults: `262144` context, `--gpu-memory-utilization 0.65`, `--mamba-block-size
+256` (the model is GDN-hybrid), `SPEC_TOKENS=10`, and the qwen3 reasoning +
+qwen3_coder tool-call parsers. **Attention backend:** the script passes
+`--attention-backend flashinfer`, but with DFlash active vLLM overrides it to
+`FLASH_ATTN` — the only backend that supports the drafter's non-causal attention
+([vllm#41559](https://github.com/vllm-project/vllm/issues/41559)) — and the KV
+cache stays bf16; the flag is honoured only for `--mtp`/`--no-spec`. Measured on
+the GB10 (image `2396a611`, toolbench): DFlash at `SPEC_TOKENS=10` accepts **5.13
+tokens per model forward** (~10 s/task), beating `n=5`'s 4.21 — see the
+[benchmark](benchmarks/qwen3.6-27b-tool-calling.md#follow-up-dflash-spec_tokens-sweep-on-the-rebuilt-image-2396a611).
+At 262K context the KV pool (~561K tokens) gives ~2.14× concurrency. The settings translate a community
 `docker-compose` (kept as `qwen36-27b-notes.md` for reference) onto our
 mainline-from-source image — aeon-vllm-ultimate-only env vars and multimodal
 flags are dropped (see the script header for why). Because it's a thinking model,

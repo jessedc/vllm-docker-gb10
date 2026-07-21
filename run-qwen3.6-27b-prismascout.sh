@@ -93,8 +93,9 @@ vllm_args=(
   --port 8000
   --trust-remote-code
   --quantization compressed-tensors      # PrismaSCOUT body is compressed-tensors NVFP4
-  --kv-cache-dtype auto
-  --attention-backend flashinfer
+  --kv-cache-dtype auto                   # DFlash needs non-causal draft attn -> KV stays bf16 anyway (vllm#41559)
+  --attention-backend flashinfer          # NOTE: with DFlash the engine overrides this to FLASH_ATTN (the only
+                                          # backend supporting the drafter's non-causal attn); honoured only for --mtp/--no-spec
   --mamba-block-size 256                  # Qwen3.6 has GDN/linear-attention layers
   --max-model-len "${MAX_MODEL_LEN:-262144}"
   --max-num-seqs "${MAX_NUM_SEQS:-6}"
@@ -125,8 +126,13 @@ if [[ "$NO_REASONING" != 1 ]]; then
 fi
 
 # Spec-decode config. dflash pulls the external drafter; mtp uses the in-model head.
-# SPEC_TOKENS=10 matches the source notes; forum post #32 found 8 the sweet spot
-# and 15 too memory-hungry ("Spark died under it").
+# SPEC_TOKENS=10 measured best on THIS box (GB10, toolbench, image 2396a611): n=10
+# accepts 5.13 tokens/forward @ 10.2 s/task vs n=5's 4.21 @ 13.1 s/task. DFlash's
+# block-diffusion drafter fills the whole block cheaply, so even positions 5-9 keep
+# accepting (30/25/20/14/11%) — extending the window pays off here. (n=5 has a higher
+# *rate*, 64% vs 41%, but that's just averaging over fewer/easier positions; accept
+# *length* drives speed.) Off-box guides tune lower (z-lab n=5 on RTX); n=15 OOM'd the
+# Spark once. Sweep SPEC_TOKENS= for your workload.
 case "$SPEC" in
   dflash) vllm_args+=(--speculative-config "{\"method\":\"dflash\",\"model\":\"${DRAFTER}\",\"num_speculative_tokens\":${SPEC_TOKENS:-10}}") ;;
   mtp)    vllm_args+=(--speculative-config "{\"method\":\"mtp\",\"num_speculative_tokens\":${SPEC_TOKENS:-3}}") ;;

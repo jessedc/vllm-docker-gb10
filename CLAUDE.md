@@ -107,6 +107,19 @@ Tracking `main` is the default and is bleeding-edge by design.
   + reasoning use the `gemma4` parsers and the in-image chat template at
   `/opt/vllm/examples/tool_chat_template_gemma4.jinja`; `--no-tools` disables all
   three. Needs the transformers-from-source build above.
+- `run-qwen3.6-27b-prismascout.sh` serves the dense
+  `rdtand/…PrismaSCOUT…NVFP4` checkpoint with **DFlash** spec decode (external
+  `z-lab/Qwen3.6-27B-DFlash` drafter) by default. **Attention-backend gotcha:**
+  the script passes `--attention-backend flashinfer`, but DFlash needs *non-causal*
+  draft attention, which only `FLASH_ATTN`/`FLEX_ATTENTION` support — so vLLM
+  **overrides** the flag to `FLASH_ATTN` and the KV cache stays **bf16** regardless
+  of `--kv-cache-dtype` (do **not** try to force fp8 KV with DFlash — vllm#41559).
+  The flashinfer flag is honoured only under `--mtp`/`--no-spec`. **Spec width:**
+  `SPEC_TOKENS=10` is the measured optimum on the GB10 (accepts 5.13 tok/forward
+  vs `n=5`'s 4.21; ~22% lower per-task latency) — accept *length* drives speed, not
+  the higher headline *rate* a smaller `n` shows. Needs
+  `run-qwen3.6-27b-prismascout.sh`'s unified-memory OOM safety scaffolding (shared
+  verbatim with the unsloth preset below).
 - `run-qwen3.6-27b-unsloth.sh` serves `unsloth/Qwen3.6-27B-NVFP4` (dense,
   multimodal `qwen3_5`) per unsloth's DGX Spark guide. NVFP4 is auto-detected
   (`compressed-tensors`) so **no `--quantization`**, and `--attention-backend`
@@ -132,6 +145,6 @@ Tracking `main` is the default and is bleeding-edge by design.
   `<think>…</think>` is returned verbatim in `content` (client splits it itself;
   tool calling is unaffected). Single-stream ~11 tok/s without MTP is the Spark's
   memory-bandwidth ceiling for a 27B, not a misconfig. Image supports the b12x
-  (MoE) kernels at **flashinfer 0.6.12** (guide's ≥0.6.13 is conservative).
+  (MoE) kernels at **flashinfer 0.6.14** (guide's ≥0.6.13 is conservative).
   Distinct from `run-qwen3.6-27b-prismascout.sh` (PrismaSCOUT + DFlash); reuses that script's
   unified-memory OOM safety scaffolding verbatim.

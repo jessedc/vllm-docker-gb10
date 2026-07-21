@@ -126,3 +126,57 @@ separate the throughput tiers cleanly but is a small sample for the accuracy
 delta — the PrismaSCOUT failure reproduced across both runs on the same task,
 which is the stronger signal. Both models booted from warm caches in ~150–165 s
 with no unified-memory OOM.*
+
+---
+
+## Follow-up: DFlash `SPEC_TOKENS` sweep on the rebuilt image (`2396a611`)
+
+Rebuilt the vLLM image from a newer `main` (commit `2396a611`, flashinfer
+`0.6.14`) to pull in [#47914](https://github.com/vllm-project/vllm/pull/47914),
+which reworks hybrid sliding-window/full-attention DFlash drafters on the V2
+runner. Two things fell out of serving PrismaSCOUT on it:
+
+- **DFlash now runs on `FLASH_ATTN`, not FlashInfer.** The drafter needs
+  *non-causal* attention, which only `FLASH_ATTN`/`FLEX_ATTENTION` support
+  ([vllm#41559](https://github.com/vllm-project/vllm/issues/41559)); the engine
+  auto-selects it and **overrides** the script's `--attention-backend flashinfer`.
+  The KV cache therefore stays **bf16** regardless of `--kv-cache-dtype`. (The
+  flag is still honoured for `--mtp`/`--no-spec`.)
+- **`SPEC_TOKENS=10` beats `5` on this box.** Re-ran the identical toolbench suite
+  (5 tasks × 3 trials) at each setting. Spec-decode counters from `/metrics`:
+
+| Metric | `SPEC_TOKENS=5` | **`SPEC_TOKENS=10`** |
+|---|---|---|
+| Acceptance **rate** | 64.3% | 41.3% |
+| Accepted **per cycle** | 3.21 / 5 | 4.13 / 10 |
+| **Mean accept length** (tok / model forward) | 4.21 | **5.13** |
+| e2e throughput (tok/s wall-clock) | 31.6 | **34.4** |
+| **Mean wall / task** | 13.1 s | **10.2 s** |
+| Final-answer accuracy | 15/15 | 14/15 |
+| Tool-selection accuracy | 100% | 100% |
+
+Per-position acceptance (fraction of draft cycles accepting position *i*):
+
+```
+n=5   p0:90% p1:76% p2:63% p3:51% p4:41%
+n=10  p0:90% p1:75% p2:60% p3:49% p4:37% p5:30% p6:25% p7:20% p8:14% p9:11%
+```
+
+**Takeaway — accept *length*, not *rate*, is what drives speed.** `n=5` posts a
+higher headline acceptance *rate* only because it averages over fewer, easier
+positions. DFlash's block-diffusion drafter fills the whole block cheaply, so at
+`n=10` even positions 5–9 keep accepting (30→11%), buying ~0.9 more tokens per
+expensive target forward (5.13 vs 4.21) and ~22% lower per-task latency. The
+default is therefore `SPEC_TOKENS=10`. (Off-box guides tune lower — e.g. z-lab
+n=5 on an RTX — but that didn't transfer to the GB10.) The 15/15-vs-14/15 accuracy
+difference is stochastic (temp 0.7); spec decoding is output-distribution-neutral,
+so it isn't a quality signal. Raw data:
+[`results-prismascout-dflash-2396a611.json`](./results-prismascout-dflash-2396a611.json)
+(n=5),
+[`results-prismascout-dflash-2396a611-n10.json`](./results-prismascout-dflash-2396a611-n10.json)
+(n=10).
+
+*Caveat: not a controlled before/after vs the pre-rebuild image — the original
+"~51% / 5.1 per-cycle" figure was a different workload with ~2× the tokens, so
+these numbers stand on their own rather than proving the rebuild raised
+acceptance.*
