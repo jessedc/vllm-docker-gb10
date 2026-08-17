@@ -2,19 +2,20 @@
 #
 # Build vLLM from source for the NVIDIA DGX Spark (GB10 Grace Blackwell, sm_121a).
 #
-# Strategy: start FROM the official CUDA 13 nightly image, which already ships a
-# known-good GPU toolchain for this exact GPU (PyTorch 2.11 + cu130, FlashInfer,
-# Triton, full CUDA 13.0 toolkit incl. nvcc + ninja). We then recompile vLLM's
-# C++/CUDA kernels from a pinned source revision against that toolchain, so the
-# kernels are built for compute_121a instead of a compatibility fallback -- while
-# never touching the fragile torch/flashinfer stack the base image got right.
+# Strategy: start FROM the official vLLM image built from the SAME source ref we
+# are compiling (build.sh derives it), which already ships the exact GPU stack
+# that ref pins -- torch + cu130, FlashInfer and its prebuilt cubins, Triton, the
+# full CUDA 13 toolkit incl. nvcc + ninja. The one thing that image lacks is
+# kernels for this GPU: every official image is built for 8.0-12.0, and GB10 is
+# 12.1a. So we recompile only vLLM's own C++/CUDA extensions for compute_121a
+# against that toolchain, never touching the fragile torch/flashinfer stack.
 
-ARG BASE_IMAGE=vllm/vllm-openai:cu130-nightly
+ARG BASE_IMAGE=vllm/vllm-openai:v0.27.1-aarch64
 FROM ${BASE_IMAGE}
 
 # --- build configuration (override via --build-arg / build.sh) -------------
 ARG VLLM_REPO=https://github.com/vllm-project/vllm.git
-ARG VLLM_REF=main
+ARG VLLM_REF=v0.27.1
 # GB10 Grace Blackwell compute capability. "12.1a" -> sm_121a.
 ARG TORCH_CUDA_ARCH_LIST=12.1a
 # Compile parallelism (Spark has 20 cores / 121 GB RAM).
@@ -45,21 +46,18 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       | sh -s -- -y --default-toolchain stable --profile minimal
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-# Pin the torch family the base image built for cu130/sm_121 so dependency
-# resolution can never swap it for a generic PyPI wheel. flashinfer is left
-# UNPINNED on purpose: vLLM main often pins a newer flashinfer than the nightly
-# base ships, and flashinfer JIT-compiles its kernels at runtime using the
-# in-image CUDA 13 toolchain (which supports sm_121a). use_existing_torch.py
-# below also strips torch from vLLM's own requirements as belt-and-suspenders.
+# Pin the torch family the base image was built against so dependency resolution
+# can never swap it for a generic PyPI wheel. When base and source ref match (the
+# default) this pin equals what vLLM's requirements ask for anyway, so it is pure
+# insurance; it still matters when building main on the nightly base, where the
+# two can drift. flashinfer stays UNPINNED on purpose -- it JIT-compiles its
+# kernels at runtime via the in-image CUDA 13 toolchain (which supports sm_121a),
+# so a newer pin is safe. use_existing_torch.py below also strips torch from
+# vLLM's own requirements as belt-and-suspenders.
 RUN pip freeze | grep -iE '^(torch|torchvision|torchaudio)==' \
       > /opt/spark-constraints.txt \
  && echo "--- pinned toolchain ---" && cat /opt/spark-constraints.txt
 ENV PIP_CONSTRAINT=/opt/spark-constraints.txt
-
-# Drop the base's prebuilt flashinfer kernel caches; they are tied to the base's
-# flashinfer version and would mismatch the (possibly newer) one vLLM pins.
-# flashinfer-python is reinstalled below to vLLM's pin and JITs at runtime.
-RUN pip uninstall -y flashinfer-jit-cache flashinfer-cubin || true
 
 # Fetch the requested vLLM source revision (branch, tag, or commit SHA).
 # An explicit fetch of the ref keeps this robust when main advances between
@@ -80,19 +78,56 @@ RUN --mount=type=cache,target=/ccache \
     pip install --no-build-isolation -r requirements/build/cuda.txt \
  && pip install --no-build-isolation -v .
 
-# Very-new model architectures land in vLLM main before they reach a tagged
-# transformers release. vLLM main recognizes e.g. model_type `gemma4_unified`,
-# but transformers <= 5.6.0 does not, so HF AutoConfig rejects the checkpoint
-# before vLLM's own model class ever loads it (vLLM only requires
-# transformers >= 5.5.3, which is satisfied but insufficient). Install
-# transformers from a newer source revision. PIP_CONSTRAINT still pins the torch
-# family, so this cannot drag in a generic torch wheel; flashinfer stays
-# untouched. Done AFTER the kernel compile so that cached layer is reused.
-# Override the ref (a branch/tag/SHA) or set it to a release like "5.6.0" to opt
-# out: --build-arg TRANSFORMERS_REF=...
-ARG TRANSFORMERS_REF=main
-RUN pip install --no-cache-dir \
-      "transformers @ git+https://github.com/huggingface/transformers.git@${TRANSFORMERS_REF}"
+# flashinfer ships two companion packages of prebuilt kernels (flashinfer-cubin,
+# flashinfer-jit-cache) that are only valid for their exact flashinfer-python
+# version. Keep them when they still match after the install above -- which is
+# the normal case now that the base image is built from this same vLLM ref, and
+# it matters on this machine: without cubins flashinfer JIT-compiles at first
+# boot, and that compile has been observed to drive the Spark's unified memory
+# into a global OOM. Drop them only if the versions actually diverged (e.g. when
+# building main on the nightly base), so flashinfer JITs rather than loading
+# kernels built for a different version.
+# Compare only the public version: flashinfer-jit-cache carries a local build
+# suffix (0.6.16.post3+cu130) that flashinfer-python does not, and a naive string
+# compare would read that as a mismatch and throw the cubins away.
+RUN set -eu; \
+    ver() { pip show "$1" 2>/dev/null | awk '/^Version:/{print $2}' | cut -d+ -f1; }; \
+    fi_ver="$(ver flashinfer-python)"; \
+    for pkg in flashinfer-cubin flashinfer-jit-cache; do \
+      pkg_ver="$(ver "$pkg")"; \
+      if [ -z "$pkg_ver" ]; then \
+        echo ">> $pkg: not installed"; \
+      elif [ "$pkg_ver" = "$fi_ver" ]; then \
+        echo ">> $pkg $pkg_ver: kept (matches flashinfer-python $fi_ver)"; \
+      else \
+        echo ">> $pkg $pkg_ver: STALE vs flashinfer-python $fi_ver -- dropping"; \
+        pip uninstall -y "$pkg"; \
+      fi; \
+    done
+
+# Very-new model architectures can land in vLLM before they reach a tagged
+# transformers release: vLLM may recognize a model_type (e.g. `gemma4_unified`)
+# that HF AutoConfig still rejects, so the checkpoint fails before vLLM's own
+# model class ever loads (vLLM only requires transformers >= 5.5.3, which is
+# satisfied but insufficient). This escape hatch installs transformers from an
+# arbitrary source revision.
+#
+# EMPTY BY DEFAULT: when the base image is the official image for the vLLM ref
+# we are building (the norm), it already carries the transformers upstream
+# validated against that release, and overwriting it with a much newer main is
+# the bigger risk. Set --build-arg TRANSFORMERS_REF=main (or a tag/SHA) to opt
+# in when a checkpoint needs an arch newer than the release ships.
+#
+# PIP_CONSTRAINT still pins the torch family so this cannot drag in a generic
+# torch wheel; flashinfer stays untouched. Done AFTER the kernel compile so that
+# expensive cached layer is reused.
+ARG TRANSFORMERS_REF=
+RUN if [ -n "${TRANSFORMERS_REF}" ]; then \
+      pip install --no-cache-dir \
+        "transformers @ git+https://github.com/huggingface/transformers.git@${TRANSFORMERS_REF}"; \
+    else \
+      echo ">> keeping base image transformers $(pip show transformers | awk '/^Version:/{print $2}')"; \
+    fi
 
 # Record provenance inside the image and sanity-check the result.
 RUN cp /opt/vllm-commit.txt /etc/vllm-source-commit \

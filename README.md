@@ -41,43 +41,51 @@ Everything targets `sm_121a` (GB10); building for a different GPU means changing
 
 ## How it works
 
-vLLM has no official `sm_121` wheels yet, and the hard part of a Spark build is
-the underlying GPU stack (PyTorch + FlashInfer + Triton). The official nightly
-image `vllm/vllm-openai:cu130-nightly` already gets that stack right for this
-GPU, so we use it as the base and **recompile only vLLM's own C++/CUDA kernels**
-from a pinned source revision, targeting `compute_121a` directly.
+vLLM has no official `sm_121` wheels, and the hard part of a Spark build is the
+underlying GPU stack (PyTorch + FlashInfer + Triton + CUDA). Upstream's own
+release image already gets that stack exactly right — it is built from the same
+source we want, with the versions that release pins. The *only* thing it lacks is
+kernels for this GPU: every official image is compiled for `8.0`–`12.0`, and GB10
+is `12.1a`.
+
+So we start **FROM the official vLLM image for the ref we are building** and
+**recompile only vLLM's own C++/CUDA kernels** against it, targeting
+`compute_121a` directly. Base and source stay in lockstep by construction —
+`build.sh` derives one from the other.
 
 ```
-FROM vllm/vllm-openai:cu130-nightly   # pinned by digest -> torch 2.11+cu130, nvcc 13, ninja
-  + apt: git cmake ccache rust        # build tools the runtime image lacks
-  +      cuda-libraries-dev-13-0      # CUDA dev headers/symlinks (cusparse.h, libnvrtc.so, ...)
-  + pin torch (cu130)                 # so the source build can't swap it for a PyPI wheel
-  + git clone vllm @ <commit>         # tracks main HEAD by default
-  + use_existing_torch.py             # keep the cu130 torch
+FROM vllm/vllm-openai:v0.27.1-aarch64   # pinned by digest -> torch 2.13+cu130, flashinfer, nvcc 13
+  + apt: git cmake ccache rust          # build tools the runtime image lacks
+  +      cuda-libraries-dev-13-0        # CUDA dev headers/symlinks (cusparse.h, libnvrtc.so, ...)
+  + pin torch (cu130)                   # so the source build can't swap it for a PyPI wheel
+  + git clone vllm @ <commit>           # the same ref the base was built from
+  + use_existing_torch.py               # keep the cu130 torch
   + TORCH_CUDA_ARCH_LIST=12.1a pip install .   # compile kernels for GB10
+  + keep flashinfer cubins if they match # no first-boot JIT storm (see gotchas)
 ```
-
-> **Verified:** this builds clean and serves — confirmed by compiling all
-> kernels for `compute_121a/sm_121a`, importing the from-source `vllm._C`, and
-> serving a completion on the GB10 (`torch 2.11.0+cu130`, `flashinfer 0.6.14`).
 
 ## Build
 
 ```bash
-./build.sh                    # build from current vLLM main HEAD
-./build.sh --vllm-ref v0.11.0 # build a specific tag / branch / commit SHA
-./build.sh --refresh-base     # re-pull the nightly base and re-pin its digest
+./build.sh                    # build the pinned vLLM release (v0.27.1)
+./build.sh --vllm-ref v0.27.1 # build a specific tag / branch / commit SHA
+./build.sh --vllm-ref main    # bleeding edge — uses the nightly base image
+./build.sh --base-image REF   # override the auto-derived base image
+./build.sh --refresh-base     # re-pull the base image and re-pin its digest
 ./build.sh --no-cache         # clean rebuild
 ./build.sh --reproduce        # rebuild exactly what build.lock records
 ```
 
-Each build writes **`build.lock`** recording the base-image digest and the exact
-vLLM commit, and tags the image `vllm-spark:<short-commit>` and `vllm-spark:latest`.
+Each build writes **`build.lock`** recording the base image + digest and the exact
+vLLM commit, and tags the image `vllm-spark:<short-commit>`, `vllm-spark:latest`,
+and — for a release ref — `vllm-spark:v0.27.1`.
 The first compile takes a while (single-arch, but it's the full kernel set);
 `ccache` makes later rebuilds much faster.
 
-> Tracking `main` is bleeding edge by design. To pin a known-good build,
-> commit `build.lock` (or use `--vllm-ref <sha>`) and rebuild with `--reproduce`.
+> The default is a **pinned release**. `--vllm-ref main` is still supported and
+> is bleeding edge by design; it falls back to `vllm/vllm-openai:nightly-aarch64`
+> as the base, which can lag `main` and reintroduces the version skew the release
+> pairing avoids.
 
 ## Serve
 
@@ -139,11 +147,19 @@ DETACH=1 ./run-qwen3.6-27b-prismascout.sh      # background server, runs until s
 
 Defaults: `262144` context, `--gpu-memory-utilization 0.65`, `--mamba-block-size
 256` (the model is GDN-hybrid), `SPEC_TOKENS=10`, and the qwen3 reasoning +
-qwen3_coder tool-call parsers. **Attention backend:** the script passes
-`--attention-backend flashinfer`, but with DFlash active vLLM overrides it to
-`FLASH_ATTN` — the only backend that supports the drafter's non-causal attention
-([vllm#41559](https://github.com/vllm-project/vllm/issues/41559)) — and the KV
-cache stays bf16; the flag is honoured only for `--mtp`/`--no-spec`. Measured on
+qwen3_coder tool-call parsers. **Attention backend (changed in v0.27.1):** the
+script used to pass `--attention-backend flashinfer` unconditionally, because
+with DFlash active vLLM overrode it to `FLASH_ATTN` — the only backend that
+supports the drafter's non-causal attention
+([vllm#41559](https://github.com/vllm-project/vllm/issues/41559)). **v0.27.1
+picks the backend per model instead of overriding**, so flashinfer would be
+honoured for the main decoder while only the drafter fell back to `FLASH_ATTN` —
+and `FlashInferBackend` cannot do full CUDA graphs under spec-decode, forcing
+`cudagraph_mode=PIECEWISE`. Measured on this box (image `6e448d0e`, 300-token
+single stream, temp 0): **28.8 tok/s** with flashinfer vs **32.2 tok/s** letting
+it auto-pick `FLASH_ATTN` (**+11.9%**, and 448,406 vs 444,200 KV tokens). The
+script now sets the backend only for `--mtp`/`--no-spec`. The KV cache still
+stays bf16 either way. Measured on
 the GB10 (image `2396a611`, toolbench): DFlash at `SPEC_TOKENS=10` accepts **5.13
 tokens per model forward** (~10 s/task), beating `n=5`'s 4.21 — see the
 [benchmark](benchmarks/qwen3.6-27b-tool-calling.md#follow-up-dflash-spec_tokens-sweep-on-the-rebuilt-image-2396a611).
@@ -228,19 +244,33 @@ docker run --rm --gpus all --entrypoint python3 vllm-spark:latest -c \
 
 ## Notes
 
-- `vllm/vllm-openai:cu130-nightly` is a **moving tag**; `build.sh` pins it by
-  **digest** at build time so a given `build.lock` is reproducible. Use
-  `--refresh-base` to intentionally move to a newer nightly.
-- **Version drift:** the nightly base lags `main` by several minor versions, so
-  `main` often pins a newer `flashinfer` than the base ships. We therefore leave
-  flashinfer **unpinned** and let it install the version `main` wants;
-  flashinfer JIT-compiles its kernels at runtime using the in-image CUDA 13
-  toolchain (the first request that hits a new kernel shape pays a one-time
-  compile). For a fully aligned, no-surprises build, pass `--vllm-ref <sha>`
-  with a commit close to the base, or pin a stable release tag.
-- `vllm.__version__` reports `0.1.dev1+g<commit>` because the build does a
-  shallow clone (no tags for setuptools-scm); the `+g<commit>` and
-  `/etc/vllm-source-commit` are the authoritative provenance.
+- **Base and source ref move together.** `build.sh`'s `base_for_ref()` maps a
+  `v*` ref to that release's official image and anything else (`main`, a branch,
+  a SHA) to `nightly-aarch64`. Base tags are **moving**, so `build.sh` pins the
+  resolved **digest** into `build.lock`; use `--refresh-base` to intentionally
+  move to a newer one, or `--base-image` to override the mapping.
+- **`vllm/vllm-openai:cu130-nightly` is dead** — last built 2026-04-23 and still
+  on torch 2.11, while v0.27.1 requires torch 2.13. It was the base for earlier
+  builds here; don't go back to it.
+- **Version drift is what the release pairing removes.** On a release build the
+  base already carries the exact `torch` / `flashinfer` that ref pins, so
+  flashinfer's prebuilt cubins stay valid and are **kept** — no first-boot JIT
+  storm. flashinfer is still left **unpinned** in the build, which matters for
+  `--vllm-ref main`: the nightly base can lag what `main` pins, and there
+  flashinfer JIT-compiles at runtime via the in-image CUDA 13 toolchain (the
+  first request hitting a new kernel shape pays a one-time compile). The
+  Dockerfile drops the cubin/jit-cache packages only when their version actually
+  diverges from `flashinfer-python`.
+- `vllm.__version__` is a setuptools-scm string, not the release number — a
+  release build reports `0.27.2.dev0+g<commit>.d<date>` (scm sees tag `v0.27.1`
+  and bumps to the next dev). The `+g<commit>` and `/etc/vllm-source-commit` are
+  the authoritative provenance.
+- The compiled extension is **`vllm._C_stable_libtorch`**, not `vllm._C` —
+  upstream moved to the stable libtorch ABI, so `import vllm._C` raising
+  `ModuleNotFoundError` is normal, not a broken build.
+- Kernels emit **`sm_120` SASS** even with `TORCH_CUDA_ARCH_LIST=12.1a`: sm_121
+  is family-compatible with sm_120 cubins under CUDA 13, so they run on GB10.
+  This matches the earlier benchmarked images byte for byte.
 - To hack on vLLM, the source tree lives at `/opt/vllm` inside the image; the
   built commit is also at `/etc/vllm-source-commit`.
 - Verify the GPU is visible from a container:
