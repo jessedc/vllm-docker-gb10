@@ -27,6 +27,7 @@ vLLM's source is cloned *inside* the image at build time.
 DETACH=1 ./run.sh Qwen/Qwen3-8B          # detached server, restarts on boot
 ./run-qwen3.6-35b-a3b.sh [--mtp]                 # tuned preset for nvidia/Qwen3.6-35B-A3B-NVFP4
 ./run-gemma4-12b.sh [--no-tools]             # tuned preset for RedHatAI/gemma-4-12B-it-NVFP4 (multimodal)
+./run-qwen3.8-27b-prismaaqua.sh [--no-spec]      # tuned preset for rdtand/Qwen3.8-27B-PrismaAQUA-5.5bit-vllm
 
 (cd observability && docker compose up -d) # Prometheus + Grafana on the server's /metrics (localhost:3000)
 ```
@@ -199,3 +200,47 @@ into `Dockerfile` → image tagged `vllm-spark:<short-commit>`, `:latest`, and
   `has_flashinfer_b12x_moe()` are both `True`, device capability `(12, 1)`.
   Distinct from `run-qwen3.6-27b-prismascout.sh` (PrismaSCOUT + DFlash); reuses that script's
   unified-memory OOM safety scaffolding verbatim.
+- `run-qwen3.8-27b-prismaaqua.sh` serves
+  `rdtand/Qwen3.8-27B-PrismaAQUA-5.5bit-vllm` — a **mixed-precision** quant of
+  `Qwen/Qwen3.8-27B` (247 Linears NVFP4 W4A4-g16, 223 FP8-E4M3 per-channel, 26
+  BF16; 21.98 GiB, 5.5 bpp). Despite the "3.8" name the arch is **`qwen3_5` /
+  `Qwen3_5ForConditionalGeneration`** — same family as the unsloth preset — so
+  v0.27.1 + the base image's transformers 5.15.0 know it natively (no
+  `--trust-remote-code`, no transformers-from-source build). **Pass no
+  `--quantization`:** `config.json` sets `format: "mixed-precision"` globally with
+  a per-`config_group` `format` (`nvfp4-pack-quantized` / `float-quantized`)
+  underneath, and vLLM's `CompressedTensorsConfig` reads the per-group format
+  first — naming a scheme would flatten every layer onto it. Multimodal, so
+  `--attention-backend` is left to auto-pick (lands on FlashAttention); forcing
+  flashinfer hits the gemma4/unsloth rejection. `--moe-backend` omitted (dense);
+  `--override-generation-config` omitted (the repo ships its own
+  `generation_config.json` with the Qwen3.8 sampling defaults); `--chat-template`
+  omitted (the repo's `chat_template.jinja` already emits the
+  `<tool_call><function=…><parameter=…>` XML the parser expects). **`--mamba-block-size`
+  is deliberately NOT passed** even though 48/64 layers are `linear_attention`:
+  v0.27.1 hard-rejects it here ("can only be set with --enable-prefix-caching" —
+  prefix caching is auto-disabled for this hybrid + MTP combination); it is a
+  tuning knob and vLLM picks a valid size itself. Spec decode is the
+  **in-checkpoint MTP head** (`mtp.*` tensors, kept BF16 by the allocator), on by
+  default. **Measured on this box** (image `6e448d0e`, 300-token single stream,
+  temp 0, warm): no-spec 10.4 tok/s; `n=2` 16.6; **`n=3` 17.7 (+70%, the
+  default)**; `n=4` 16.9. `n=4` accepts *more* per draft (2.94 vs 2.72
+  tok/forward) but the extra draft pass outweighs position 3's 24% hit rate —
+  accept length is not the whole story once the draft cost rises. **Reasoning
+  traces arrive on the OpenAI-standard `reasoning` field, NOT `reasoning_content`**
+  (streaming deltas likewise use `reasoning`; `reasoning_content` is null). That
+  is a v0.27.1 field rename, *not* the discarded-thinking behaviour the unsloth
+  preset documents — the trace is fully present, so this preset needs neither
+  `--no-reasoning-parser` nor a `DEFAULT_MAX_TOKENS` workaround. **Context: the
+  full native 262144 is served and VERIFIED** — 254,462-token prompt (97% of the
+  window) with correct mid-haystack needle retrieval, clean 400 over the limit,
+  525,830 tokens of KV cache (2.01x concurrency at full length). Memory is not the
+  binding constraint; **prefill** is: 1251 tok/s @105k, 839 @210k, 724 @254k, so a
+  full-window prompt takes ~6 min to ingest (decode is unaffected). **Do NOT add
+  `--max-num-batched-tokens`** — the two Qwen3.6 presets pin 32768 and vLLM warns
+  at boot that spec decode clamped `max_num_scheduled_tokens` to 2048 and to
+  "consider increasing max_num_batched_tokens", but measured here that is
+  **backwards**: 32768 is ~32% slower at prefill (848 vs 1251 tok/s, warm 105k)
+  *and* costs 21% of the KV cache (417,888 vs 525,830; 1.59x vs 2.01x). The
+  Spark's unified memory does not reward big prefill chunks — ignore the warning.
+  Reuses the unified-memory OOM safety scaffolding verbatim.

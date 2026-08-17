@@ -34,6 +34,8 @@ API is on `http://localhost:8000/v1`.
 | `download-qwen3.6-27b-prismascout.sh` | Pre-fetches the 27B model + DFlash drafter into the HF cache | Helper for the preset above |
 | `run-qwen3.6-27b-unsloth.sh` | Tuned preset for `unsloth/Qwen3.6-27B-NVFP4` (b12x cute-DSL, built-in MTP) | Single-purpose template |
 | `download-qwen3.6-27b-unsloth.sh` | Pre-fetches the unsloth 27B NVFP4 checkpoint into the HF cache | Helper for the preset above |
+| `run-qwen3.8-27b-prismaaqua.sh` | Tuned preset for `rdtand/Qwen3.8-27B-PrismaAQUA-5.5bit-vllm` (mixed-precision, built-in MTP) | Single-purpose template |
+| `download-qwen3.8-27b-prismaaqua.sh` | Pre-fetches the Qwen3.8-27B PrismaAQUA checkpoint into the HF cache | Helper for the preset above |
 | `observability/` | One-command Prometheus + Grafana stack for the server's `/metrics` | Reusable across models |
 
 Everything targets `sm_121a` (GB10); building for a different GPU means changing
@@ -241,6 +243,82 @@ docker run --rm --gpus all --entrypoint python3 vllm-spark:latest -c \
   "import torch; from vllm.utils.flashinfer import has_flashinfer_b12x_gemm as g, \
    has_flashinfer_b12x_moe as m; print(torch.cuda.get_device_capability(), g(), m())"
 ```
+
+#### Qwen3.8-27B PrismaAQUA 5.5 bpp (`run-qwen3.8-27b-prismaaqua.sh`)
+
+A fourth preset serves [`rdtand/Qwen3.8-27B-PrismaAQUA-5.5bit-vllm`](https://huggingface.co/rdtand/Qwen3.8-27B-PrismaAQUA-5.5bit-vllm)
+— a **mixed-precision** quant of `Qwen/Qwen3.8-27B` where every Linear was priced
+individually and given the format it earned: 247 NVFP4 (W4A4, group 16, mostly
+MLPs), 223 FP8-E4M3 (per-channel, mostly attention out-projections), 26 BF16 (the
+tiny `linear_attn` gate projections). 21.98 GiB on disk, 5.5 bpp over the
+quantizable body; `lm_head`, `embed_tokens`, the visual tower and the MTP head
+stay BF16. Despite the "3.8" name the arch is `qwen3_5`, the same family the
+unsloth preset above serves, so vLLM v0.27.1 and the base image's transformers
+5.15.0 both know it natively.
+
+```bash
+./download-qwen3.8-27b-prismaaqua.sh      # fetch the checkpoint into the HF cache (~22 GiB)
+./run-qwen3.8-27b-prismaaqua.sh           # foreground, MTP spec decode (default; num_speculative_tokens=3)
+./run-qwen3.8-27b-prismaaqua.sh --no-spec # disable MTP -> plain autoregressive decode
+DETACH=1 ./run-qwen3.8-27b-prismaaqua.sh  # background server (RESTART=no by default)
+```
+
+The whole mixed allocation is **auto-detected**: `config.json` declares
+`format: "mixed-precision"` globally and a per-`config_group` `format`
+(`nvfp4-pack-quantized` / `float-quantized`) underneath, and vLLM's
+`CompressedTensorsConfig` reads the per-group format first. Passing
+`--quantization` would flatten every layer onto one scheme and is exactly wrong
+here. The attention backend is left to auto-pick (it lands on FlashAttention) —
+the checkpoint is multimodal, so forcing FlashInfer hits the same rejection
+gemma4 and the unsloth preset hit. `--moe-backend` is omitted because the model
+is dense, and `--override-generation-config` is omitted because the repo ships
+its own `generation_config.json` with the Qwen3.8 defaults.
+
+> **`--mamba-block-size` is not passed here**, unlike the two Qwen3.6 presets.
+> 48 of the 64 layers are `linear_attention`, so it looks applicable, but
+> v0.27.1 **hard-rejects** it for this model: *"--mamba-block-size can only be
+> set with --enable-prefix-caching"* — prefix caching is auto-disabled for this
+> hybrid + MTP combination. It is a tuning knob, not a requirement; vLLM picks a
+> valid block size itself.
+
+> **Measured on the GB10** (image `6e448d0e`, 300-token single stream, temp 0,
+> steady state after warmup): no-spec **10.4 tok/s**; MTP `n=2` **16.6**;
+> `n=3` **17.7 (+70%)**; `n=4` **16.9**. Per-position draft acceptance at `n=3`
+> is 80 / 53 / 39%. `n=4` accepts *more* tokens per draft (2.94 vs 2.72 per
+> forward) — the extra draft pass simply costs more than position 3's 24% hit
+> rate returns, which is why **`SPEC_TOKENS=3` is the default**. Boot gives
+> 526,621 tokens of KV cache at `--gpu-memory-utilization 0.52`. Tool calling
+> (`qwen3_xml`), the tool-result round trip, image input and streaming were all
+> verified working with MTP on.
+
+> **262144 context, verified.** The preset serves the full native window
+> (`max_position_embeddings: 262144`, `rope_type: "default"` — no scaling), and it
+> is exercised, not just configured: a **254,462-token** prompt (97% of the window)
+> returned the correct mid-haystack needle, and over-limit requests get a clean
+> `400`. Boot reserves **525,830 tokens** of KV cache = **2.01×** concurrency at
+> full length, so two full-length requests fit. Memory is not the constraint —
+> **prefill** is: ~1251 tok/s at 105k, 839 at 210k, 724 at 254k as attention goes
+> quadratic, meaning a full-window prompt takes **~6 minutes to ingest**. Decode
+> speed is unaffected by context length.
+
+> **Do not add `--max-num-batched-tokens` here** — measured, and it contradicts
+> both the Qwen3.6 presets (which pin 32768) and vLLM's own boot warning
+> ("spec decode clamped `max_num_scheduled_tokens` to 2048… consider increasing
+> `max_num_batched_tokens`"). On this box that advice is **backwards**: 32768 made
+> prefill ~**32% slower** (848 vs 1251 tok/s on a warm 105k prompt) *and* cut the
+> KV cache by 21% (417,888 vs 525,830 tokens, 1.59× vs 2.01× concurrency). The
+> Spark's unified memory does not reward large prefill chunks. Ignore the warning.
+
+> **Reasoning traces come back in `reasoning`, not `reasoning_content`.** vLLM
+> v0.27.1 surfaces the parsed `<think>` block on the OpenAI-standard `reasoning`
+> field (streaming deltas use `reasoning` too); `reasoning_content` is `null`.
+> That is a field rename, not the discarded-thinking behaviour the Qwen3.6
+> unsloth preset documents — the trace is fully present here, so this preset
+> needs neither `--no-reasoning-parser` nor a `DEFAULT_MAX_TOKENS` workaround.
+
+It inherits the full unified-memory safety machinery described above
+(`MAX_JOBS=2`, autotuner off, `CACHE_HOME` persistence, `--memory 112g`,
+`RESTART=no`, `logs/` memtrace).
 
 ## Notes
 
