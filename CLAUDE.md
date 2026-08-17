@@ -231,7 +231,22 @@ into `Dockerfile` → image tagged `vllm-spark:<short-commit>`, `:latest`, and
   (streaming deltas likewise use `reasoning`; `reasoning_content` is null). That
   is a v0.27.1 field rename, *not* the discarded-thinking behaviour the unsloth
   preset documents — the trace is fully present, so this preset needs neither
-  `--no-reasoning-parser` nor a `DEFAULT_MAX_TOKENS` workaround. **Context: the
+  `--no-reasoning-parser` nor a `DEFAULT_MAX_TOKENS` workaround. **Reasoning
+  effort: the checkpoint's chat template defaults to `xhigh`; this preset now
+  serves `medium`.** The template accepts only `xhigh`/`medium`/`low` and
+  implements them purely as a prepended system instruction — xhigh adds "think
+  carefully…validate key assumptions…consider plausible alternatives" (+42 tok),
+  low adds "keep your thinking brief" (+30 tok), **medium adds nothing at all**
+  (the model's own baseline; verified: 53 / 41 / 11 prompt tokens for a "hi").
+  Set via `--default-chat-template-kwargs '{"reasoning_effort":"medium"}'`
+  (`REASONING_EFFORT=` env knob; empty → template's xhigh). It is only a
+  *default*: `--default-chat-template-kwargs` merges **under** per-request kwargs
+  (`vllm/renderers/params.py`, `defaults | overrides` with None/"auto" filtered),
+  so clients override per request with top-level `"reasoning_effort"` or
+  `"chat_template_kwargs":{"reasoning_effort":…}`. The API layer also accepts
+  `minimal`/`high`/`max`, which this template rejects with a 400; `"none"` is
+  special-cased to `enable_thinking=false` (thinking off, not an error).
+  **Context: the
   full native 262144 is served and VERIFIED** — 254,462-token prompt (97% of the
   window) with correct mid-haystack needle retrieval, clean 400 over the limit,
   525,830 tokens of KV cache (2.01x concurrency at full length). Memory is not the

@@ -82,8 +82,8 @@
 #   ./run-qwen3.8-27b-prismaaqua.sh --max-num-seqs 8   # append/override any vllm serve flag
 #
 # Env: IMAGE, PORT, HF_TOKEN, HF_HOME, GPU_MEM_UTIL, MAX_NUM_SEQS, MAX_MODEL_LEN,
-#      SPEC_TOKENS, CHAT_TEMPLATE, CACHE_HOME, LOG_DIR, COMPILE_JOBS, MEM_LIMIT,
-#      RESTART, VLLM_LOG_LEVEL, AUTOTUNE.
+#      SPEC_TOKENS, REASONING_EFFORT, CHAT_TEMPLATE, CACHE_HOME, LOG_DIR,
+#      COMPILE_JOBS, MEM_LIMIT, RESTART, VLLM_LOG_LEVEL, AUTOTUNE.
 set -euo pipefail
 
 IMAGE="${IMAGE:-vllm-spark:latest}"
@@ -141,6 +141,32 @@ vllm_args=(
                                           # <tool_call><function=…><parameter=…>
   --reasoning-parser qwen3                # keeps <think>…</think> out of `content`
 )
+
+# --- reasoning effort ------------------------------------------------------
+# The checkpoint's chat_template.jinja implements three effort levels by
+# prepending a system-message instruction, and DEFAULTS TO `xhigh`:
+#   xhigh  (template default) "think carefully …, validate key assumptions,
+#                             consider plausible alternatives, prioritize
+#                             correctness, consistency and clarity"   (+42 tok)
+#   medium                    NO instruction at all — the model's own baseline
+#   low                       "keep your thinking brief and focused, moving
+#                             directly to the conclusion"             (+30 tok)
+# Anything else makes the template raise → HTTP 400. `xhigh` is a lot of
+# deliberation for interactive use, so this preset defaults the server to
+# `medium`; set REASONING_EFFORT=xhigh|low, or REASONING_EFFORT= (empty) to fall
+# back to the checkpoint's own xhigh default.
+#
+# This is only a DEFAULT: --default-chat-template-kwargs is merged *under* the
+# per-request kwargs (vllm/renderers/params.py: `defaults | overrides`), so any
+# request may still override it with either OpenAI-standard top-level
+# `"reasoning_effort": "low"` or `"chat_template_kwargs": {"reasoning_effort": …}`.
+# Note the API layer also accepts minimal/high/max — this template rejects those
+# with a 400 — and `"reasoning_effort": "none"` sets enable_thinking=false, which
+# disables thinking entirely rather than erroring.
+REASONING_EFFORT="${REASONING_EFFORT-medium}"
+if [[ -n "$REASONING_EFFORT" ]]; then
+  vllm_args+=(--default-chat-template-kwargs "{\"reasoning_effort\":\"${REASONING_EFFORT}\"}")
+fi
 
 # See UNIFIED-MEMORY SAFETY above. Re-enable the flashinfer fp4_gemm autotuner
 # only at low util (e.g. GPU_MEM_UTIL<=0.4), where its uncounted workspace fits.
