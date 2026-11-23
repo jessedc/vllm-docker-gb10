@@ -86,6 +86,27 @@ case "$SPEC" in
   none)   MEM_UTIL="${GPU_MEM_UTIL:-0.72}" ;;
 esac
 
+# Attention backend, DFlash-aware. Before vLLM v0.27.1 this script passed
+# --attention-backend flashinfer unconditionally on the belief that the engine
+# would override it to FLASH_ATTN under DFlash (the drafter needs non-causal
+# attention). vLLM v0.27.1 no longer does that: it picks the backend PER MODEL,
+# so the flag is honoured for the main decoder while only the drafter falls back
+# to FLASH_ATTN. That split is a measured *loss* under DFlash, because
+# FlashInferBackend cannot do full CUDA graphs with spec-decode:
+#   "CUDAGraphMode.FULL_AND_PIECEWISE is not supported with spec-decode for
+#    attention backend FlashInferBackend ...; setting cudagraph_mode=PIECEWISE"
+# Measured on this box (v0.27.1 image 6e448d0e, 300-token single-stream, temp 0):
+#   flashinfer main + FLASH_ATTN draft : 28.8 tok/s, PIECEWISE graphs only
+#   FLASH_ATTN both (auto-pick)        : 32.2 tok/s, 8 FULL + 21 PIECEWISE  (+11.9%)
+# So under DFlash we now leave the backend to vLLM's auto-pick (it lands on
+# FLASH_ATTN). For --mtp/--no-spec there is no such spec-decode graph
+# restriction, so flashinfer is still requested as before.
+ATTN_ARGS=()
+case "$SPEC" in
+  dflash) ;;                                   # auto-pick -> FLASH_ATTN, full CUDA graphs
+  *)      ATTN_ARGS=(--attention-backend flashinfer) ;;
+esac
+
 # --- vllm serve options ----------------------------------------------------
 vllm_args=(
   "$MODEL"
@@ -94,8 +115,6 @@ vllm_args=(
   --trust-remote-code
   --quantization compressed-tensors      # PrismaSCOUT body is compressed-tensors NVFP4
   --kv-cache-dtype auto                   # DFlash needs non-causal draft attn -> KV stays bf16 anyway (vllm#41559)
-  --attention-backend flashinfer          # NOTE: with DFlash the engine overrides this to FLASH_ATTN (the only
-                                          # backend supporting the drafter's non-causal attn); honoured only for --mtp/--no-spec
   --mamba-block-size 256                  # Qwen3.6 has GDN/linear-attention layers
   --max-model-len "${MAX_MODEL_LEN:-262144}"
   --max-num-seqs "${MAX_NUM_SEQS:-6}"
@@ -109,6 +128,7 @@ vllm_args=(
   --generation-config vllm
   --override-generation-config '{"temperature":0.7,"top_p":0.8,"top_k":40,"presence_penalty":0.0,"repetition_penalty":1.0}'
 )
+vllm_args+=("${ATTN_ARGS[@]+"${ATTN_ARGS[@]}"}")
 
 # flashinfer's fp4_gemm autotuner allocates large GEMM workspaces that are NOT
 # counted in --gpu-memory-utilization; on the Spark's unified memory they stack on

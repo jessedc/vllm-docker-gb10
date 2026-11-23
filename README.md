@@ -34,6 +34,8 @@ API is on `http://localhost:8000/v1`.
 | `download-qwen3.6-27b-prismascout.sh` | Pre-fetches the 27B model + DFlash drafter into the HF cache | Helper for the preset above |
 | `run-qwen3.6-27b-unsloth.sh` | Tuned preset for `unsloth/Qwen3.6-27B-NVFP4` (b12x cute-DSL, built-in MTP) | Single-purpose template |
 | `download-qwen3.6-27b-unsloth.sh` | Pre-fetches the unsloth 27B NVFP4 checkpoint into the HF cache | Helper for the preset above |
+| `run-qwen3.8-27b-prismaaqua.sh` | Tuned preset for `rdtand/Qwen3.8-27B-PrismaAQUA-5.5bit-vllm` (mixed-precision, built-in MTP) | Single-purpose template |
+| `download-qwen3.8-27b-prismaaqua.sh` | Pre-fetches the Qwen3.8-27B PrismaAQUA checkpoint into the HF cache | Helper for the preset above |
 | `observability/` | One-command Prometheus + Grafana stack for the server's `/metrics` | Reusable across models |
 
 Everything targets `sm_121a` (GB10); building for a different GPU means changing
@@ -41,43 +43,51 @@ Everything targets `sm_121a` (GB10); building for a different GPU means changing
 
 ## How it works
 
-vLLM has no official `sm_121` wheels yet, and the hard part of a Spark build is
-the underlying GPU stack (PyTorch + FlashInfer + Triton). The official nightly
-image `vllm/vllm-openai:cu130-nightly` already gets that stack right for this
-GPU, so we use it as the base and **recompile only vLLM's own C++/CUDA kernels**
-from a pinned source revision, targeting `compute_121a` directly.
+vLLM has no official `sm_121` wheels, and the hard part of a Spark build is the
+underlying GPU stack (PyTorch + FlashInfer + Triton + CUDA). Upstream's own
+release image already gets that stack exactly right — it is built from the same
+source we want, with the versions that release pins. The *only* thing it lacks is
+kernels for this GPU: every official image is compiled for `8.0`–`12.0`, and GB10
+is `12.1a`.
+
+So we start **FROM the official vLLM image for the ref we are building** and
+**recompile only vLLM's own C++/CUDA kernels** against it, targeting
+`compute_121a` directly. Base and source stay in lockstep by construction —
+`build.sh` derives one from the other.
 
 ```
-FROM vllm/vllm-openai:cu130-nightly   # pinned by digest -> torch 2.11+cu130, nvcc 13, ninja
-  + apt: git cmake ccache rust        # build tools the runtime image lacks
-  +      cuda-libraries-dev-13-0      # CUDA dev headers/symlinks (cusparse.h, libnvrtc.so, ...)
-  + pin torch (cu130)                 # so the source build can't swap it for a PyPI wheel
-  + git clone vllm @ <commit>         # tracks main HEAD by default
-  + use_existing_torch.py             # keep the cu130 torch
+FROM vllm/vllm-openai:v0.27.1-aarch64   # pinned by digest -> torch 2.13+cu130, flashinfer, nvcc 13
+  + apt: git cmake ccache rust          # build tools the runtime image lacks
+  +      cuda-libraries-dev-13-0        # CUDA dev headers/symlinks (cusparse.h, libnvrtc.so, ...)
+  + pin torch (cu130)                   # so the source build can't swap it for a PyPI wheel
+  + git clone vllm @ <commit>           # the same ref the base was built from
+  + use_existing_torch.py               # keep the cu130 torch
   + TORCH_CUDA_ARCH_LIST=12.1a pip install .   # compile kernels for GB10
+  + keep flashinfer cubins if they match # no first-boot JIT storm (see gotchas)
 ```
-
-> **Verified:** this builds clean and serves — confirmed by compiling all
-> kernels for `compute_121a/sm_121a`, importing the from-source `vllm._C`, and
-> serving a completion on the GB10 (`torch 2.11.0+cu130`, `flashinfer 0.6.14`).
 
 ## Build
 
 ```bash
-./build.sh                    # build from current vLLM main HEAD
-./build.sh --vllm-ref v0.11.0 # build a specific tag / branch / commit SHA
-./build.sh --refresh-base     # re-pull the nightly base and re-pin its digest
+./build.sh                    # build the pinned vLLM release (v0.27.1)
+./build.sh --vllm-ref v0.27.1 # build a specific tag / branch / commit SHA
+./build.sh --vllm-ref main    # bleeding edge — uses the nightly base image
+./build.sh --base-image REF   # override the auto-derived base image
+./build.sh --refresh-base     # re-pull the base image and re-pin its digest
 ./build.sh --no-cache         # clean rebuild
 ./build.sh --reproduce        # rebuild exactly what build.lock records
 ```
 
-Each build writes **`build.lock`** recording the base-image digest and the exact
-vLLM commit, and tags the image `vllm-spark:<short-commit>` and `vllm-spark:latest`.
+Each build writes **`build.lock`** recording the base image + digest and the exact
+vLLM commit, and tags the image `vllm-spark:<short-commit>`, `vllm-spark:latest`,
+and — for a release ref — `vllm-spark:v0.27.1`.
 The first compile takes a while (single-arch, but it's the full kernel set);
 `ccache` makes later rebuilds much faster.
 
-> Tracking `main` is bleeding edge by design. To pin a known-good build,
-> commit `build.lock` (or use `--vllm-ref <sha>`) and rebuild with `--reproduce`.
+> The default is a **pinned release**. `--vllm-ref main` is still supported and
+> is bleeding edge by design; it falls back to `vllm/vllm-openai:nightly-aarch64`
+> as the base, which can lag `main` and reintroduces the version skew the release
+> pairing avoids.
 
 ## Serve
 
@@ -139,11 +149,19 @@ DETACH=1 ./run-qwen3.6-27b-prismascout.sh      # background server, runs until s
 
 Defaults: `262144` context, `--gpu-memory-utilization 0.65`, `--mamba-block-size
 256` (the model is GDN-hybrid), `SPEC_TOKENS=10`, and the qwen3 reasoning +
-qwen3_coder tool-call parsers. **Attention backend:** the script passes
-`--attention-backend flashinfer`, but with DFlash active vLLM overrides it to
-`FLASH_ATTN` — the only backend that supports the drafter's non-causal attention
-([vllm#41559](https://github.com/vllm-project/vllm/issues/41559)) — and the KV
-cache stays bf16; the flag is honoured only for `--mtp`/`--no-spec`. Measured on
+qwen3_coder tool-call parsers. **Attention backend (changed in v0.27.1):** the
+script used to pass `--attention-backend flashinfer` unconditionally, because
+with DFlash active vLLM overrode it to `FLASH_ATTN` — the only backend that
+supports the drafter's non-causal attention
+([vllm#41559](https://github.com/vllm-project/vllm/issues/41559)). **v0.27.1
+picks the backend per model instead of overriding**, so flashinfer would be
+honoured for the main decoder while only the drafter fell back to `FLASH_ATTN` —
+and `FlashInferBackend` cannot do full CUDA graphs under spec-decode, forcing
+`cudagraph_mode=PIECEWISE`. Measured on this box (image `6e448d0e`, 300-token
+single stream, temp 0): **28.8 tok/s** with flashinfer vs **32.2 tok/s** letting
+it auto-pick `FLASH_ATTN` (**+11.9%**, and 448,406 vs 444,200 KV tokens). The
+script now sets the backend only for `--mtp`/`--no-spec`. The KV cache still
+stays bf16 either way. Measured on
 the GB10 (image `2396a611`, toolbench): DFlash at `SPEC_TOKENS=10` accepts **5.13
 tokens per model forward** (~10 s/task), beating `n=5`'s 4.21 — see the
 [benchmark](benchmarks/qwen3.6-27b-tool-calling.md#follow-up-dflash-spec_tokens-sweep-on-the-rebuilt-image-2396a611).
@@ -226,21 +244,111 @@ docker run --rm --gpus all --entrypoint python3 vllm-spark:latest -c \
    has_flashinfer_b12x_moe as m; print(torch.cuda.get_device_capability(), g(), m())"
 ```
 
+#### Qwen3.8-27B PrismaAQUA 5.5 bpp (`run-qwen3.8-27b-prismaaqua.sh`)
+
+A fourth preset serves [`rdtand/Qwen3.8-27B-PrismaAQUA-5.5bit-vllm`](https://huggingface.co/rdtand/Qwen3.8-27B-PrismaAQUA-5.5bit-vllm)
+— a **mixed-precision** quant of `Qwen/Qwen3.8-27B` where every Linear was priced
+individually and given the format it earned: 247 NVFP4 (W4A4, group 16, mostly
+MLPs), 223 FP8-E4M3 (per-channel, mostly attention out-projections), 26 BF16 (the
+tiny `linear_attn` gate projections). 21.98 GiB on disk, 5.5 bpp over the
+quantizable body; `lm_head`, `embed_tokens`, the visual tower and the MTP head
+stay BF16. Despite the "3.8" name the arch is `qwen3_5`, the same family the
+unsloth preset above serves, so vLLM v0.27.1 and the base image's transformers
+5.15.0 both know it natively.
+
+```bash
+./download-qwen3.8-27b-prismaaqua.sh      # fetch the checkpoint into the HF cache (~22 GiB)
+./run-qwen3.8-27b-prismaaqua.sh           # foreground, MTP spec decode (default; num_speculative_tokens=3)
+./run-qwen3.8-27b-prismaaqua.sh --no-spec # disable MTP -> plain autoregressive decode
+DETACH=1 ./run-qwen3.8-27b-prismaaqua.sh  # background server (RESTART=no by default)
+```
+
+The whole mixed allocation is **auto-detected**: `config.json` declares
+`format: "mixed-precision"` globally and a per-`config_group` `format`
+(`nvfp4-pack-quantized` / `float-quantized`) underneath, and vLLM's
+`CompressedTensorsConfig` reads the per-group format first. Passing
+`--quantization` would flatten every layer onto one scheme and is exactly wrong
+here. The attention backend is left to auto-pick (it lands on FlashAttention) —
+the checkpoint is multimodal, so forcing FlashInfer hits the same rejection
+gemma4 and the unsloth preset hit. `--moe-backend` is omitted because the model
+is dense, and `--override-generation-config` is omitted because the repo ships
+its own `generation_config.json` with the Qwen3.8 defaults.
+
+> **`--mamba-block-size` is not passed here**, unlike the two Qwen3.6 presets.
+> 48 of the 64 layers are `linear_attention`, so it looks applicable, but
+> v0.27.1 **hard-rejects** it for this model: *"--mamba-block-size can only be
+> set with --enable-prefix-caching"* — prefix caching is auto-disabled for this
+> hybrid + MTP combination. It is a tuning knob, not a requirement; vLLM picks a
+> valid block size itself.
+
+> **Measured on the GB10** (image `6e448d0e`, 300-token single stream, temp 0,
+> steady state after warmup): no-spec **10.4 tok/s**; MTP `n=2` **16.6**;
+> `n=3` **17.7 (+70%)**; `n=4` **16.9**. Per-position draft acceptance at `n=3`
+> is 80 / 53 / 39%. `n=4` accepts *more* tokens per draft (2.94 vs 2.72 per
+> forward) — the extra draft pass simply costs more than position 3's 24% hit
+> rate returns, which is why **`SPEC_TOKENS=3` is the default**. Boot gives
+> 526,621 tokens of KV cache at `--gpu-memory-utilization 0.52`. Tool calling
+> (`qwen3_xml`), the tool-result round trip, image input and streaming were all
+> verified working with MTP on.
+
+> **262144 context, verified.** The preset serves the full native window
+> (`max_position_embeddings: 262144`, `rope_type: "default"` — no scaling), and it
+> is exercised, not just configured: a **254,462-token** prompt (97% of the window)
+> returned the correct mid-haystack needle, and over-limit requests get a clean
+> `400`. Boot reserves **525,830 tokens** of KV cache = **2.01×** concurrency at
+> full length, so two full-length requests fit. Memory is not the constraint —
+> **prefill** is: ~1251 tok/s at 105k, 839 at 210k, 724 at 254k as attention goes
+> quadratic, meaning a full-window prompt takes **~6 minutes to ingest**. Decode
+> speed is unaffected by context length.
+
+> **Do not add `--max-num-batched-tokens` here** — measured, and it contradicts
+> both the Qwen3.6 presets (which pin 32768) and vLLM's own boot warning
+> ("spec decode clamped `max_num_scheduled_tokens` to 2048… consider increasing
+> `max_num_batched_tokens`"). On this box that advice is **backwards**: 32768 made
+> prefill ~**32% slower** (848 vs 1251 tok/s on a warm 105k prompt) *and* cut the
+> KV cache by 21% (417,888 vs 525,830 tokens, 1.59× vs 2.01× concurrency). The
+> Spark's unified memory does not reward large prefill chunks. Ignore the warning.
+
+> **Reasoning traces come back in `reasoning`, not `reasoning_content`.** vLLM
+> v0.27.1 surfaces the parsed `<think>` block on the OpenAI-standard `reasoning`
+> field (streaming deltas use `reasoning` too); `reasoning_content` is `null`.
+> That is a field rename, not the discarded-thinking behaviour the Qwen3.6
+> unsloth preset documents — the trace is fully present here, so this preset
+> needs neither `--no-reasoning-parser` nor a `DEFAULT_MAX_TOKENS` workaround.
+
+It inherits the full unified-memory safety machinery described above
+(`MAX_JOBS=2`, autotuner off, `CACHE_HOME` persistence, `--memory 112g`,
+`RESTART=no`, `logs/` memtrace).
+
 ## Notes
 
-- `vllm/vllm-openai:cu130-nightly` is a **moving tag**; `build.sh` pins it by
-  **digest** at build time so a given `build.lock` is reproducible. Use
-  `--refresh-base` to intentionally move to a newer nightly.
-- **Version drift:** the nightly base lags `main` by several minor versions, so
-  `main` often pins a newer `flashinfer` than the base ships. We therefore leave
-  flashinfer **unpinned** and let it install the version `main` wants;
-  flashinfer JIT-compiles its kernels at runtime using the in-image CUDA 13
-  toolchain (the first request that hits a new kernel shape pays a one-time
-  compile). For a fully aligned, no-surprises build, pass `--vllm-ref <sha>`
-  with a commit close to the base, or pin a stable release tag.
-- `vllm.__version__` reports `0.1.dev1+g<commit>` because the build does a
-  shallow clone (no tags for setuptools-scm); the `+g<commit>` and
-  `/etc/vllm-source-commit` are the authoritative provenance.
+- **Base and source ref move together.** `build.sh`'s `base_for_ref()` maps a
+  `v*` ref to that release's official image and anything else (`main`, a branch,
+  a SHA) to `nightly-aarch64`. Base tags are **moving**, so `build.sh` pins the
+  resolved **digest** into `build.lock`; use `--refresh-base` to intentionally
+  move to a newer one, or `--base-image` to override the mapping.
+- **`vllm/vllm-openai:cu130-nightly` is dead** — last built 2026-04-23 and still
+  on torch 2.11, while v0.27.1 requires torch 2.13. It was the base for earlier
+  builds here; don't go back to it.
+- **Version drift is what the release pairing removes.** On a release build the
+  base already carries the exact `torch` / `flashinfer` that ref pins, so
+  flashinfer's prebuilt cubins stay valid and are **kept** — no first-boot JIT
+  storm. flashinfer is still left **unpinned** in the build, which matters for
+  `--vllm-ref main`: the nightly base can lag what `main` pins, and there
+  flashinfer JIT-compiles at runtime via the in-image CUDA 13 toolchain (the
+  first request hitting a new kernel shape pays a one-time compile). The
+  Dockerfile drops the cubin/jit-cache packages only when their version actually
+  diverges from `flashinfer-python`.
+- `vllm.__version__` is a setuptools-scm string, not the release number — a
+  release build reports `0.27.2.dev0+g<commit>.d<date>` (scm sees tag `v0.27.1`
+  and bumps to the next dev). The `+g<commit>` and `/etc/vllm-source-commit` are
+  the authoritative provenance.
+- The compiled extension is **`vllm._C_stable_libtorch`**, not `vllm._C` —
+  upstream moved to the stable libtorch ABI, so `import vllm._C` raising
+  `ModuleNotFoundError` is normal, not a broken build.
+- Kernels emit **`sm_120` SASS** even with `TORCH_CUDA_ARCH_LIST=12.1a`: sm_121
+  is family-compatible with sm_120 cubins under CUDA 13, so they run on GB10.
+  This matches the earlier benchmarked images byte for byte.
 - To hack on vLLM, the source tree lives at `/opt/vllm` inside the image; the
   built commit is also at `/etc/vllm-source-commit`.
 - Verify the GPU is visible from a container:
