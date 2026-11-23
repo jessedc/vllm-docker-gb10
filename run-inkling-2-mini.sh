@@ -83,9 +83,11 @@ done
 vllm_args=(
   "$MODEL"
   --port 8000
-  # Upstream recipe caps the Spark at 262144; start at 65536 -- a giant KV cache
-  # buys nothing on 273 GB/s unified bandwidth. Raise via MAX_MODEL_LEN.
-  --max-model-len "${MAX_MODEL_LEN:-65536}"
+  # 262144 = upstream's Spark cap (native is 1M). Cheap here: 20/24 layers are
+  # 1024-token SWA, so only 4 global layers hold full-length KV -- at 0.70 util
+  # vLLM reports 1,384,695 KV tokens = 5.28x concurrency at 262144 (measured).
+  # 1M is not attempted: unified-memory OOM risk. Override via MAX_MODEL_LEN.
+  --max-model-len "${MAX_MODEL_LEN:-262144}"
   # Decode-bound MoE: big batches don't help and #69181's conv-state over-reserve
   # scales with them.
   --max-num-seqs "${MAX_NUM_SEQS:-8}"

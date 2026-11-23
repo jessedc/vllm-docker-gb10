@@ -31,6 +31,9 @@ DETACH=1 ./run.sh Qwen/Qwen3-8B          # detached server, restarts on boot
 ./run-inkling-2-mini.sh [--dspark] [--no-tools]  # thinkingmachines/Inkling-2-Mini (needs the 647a7686 nightly build)
 
 (cd observability && docker compose up -d) # Prometheus + Grafana on the server's /metrics (localhost:3000)
+
+python3 scripts/agent_sweep.py out.json  # 1/2/3-stream sweep (main agent + 2 subagents) vs a running server
+                                         # env: MODEL, URL, OUT_TOKENS (400), REPS (2)
 ```
 
 API is OpenAI-compatible on `http://localhost:8000/v1` (`curl http://localhost:8000/v1/models`).
@@ -278,7 +281,13 @@ into `Dockerfile` → image tagged `vllm-spark:<short-commit>`, `:latest`, and
   works (pre-merge snapshot, CUDA 13.0.3; smoke-tested) via `IMAGE=`. No
   `--quantization` (auto-detects as `inkling2`); `GPU_MEM_UTIL` defaults to
   **0.70** — on CUDA the unset default is now **1.0** (extensible KV cache), which
-  is wrong on unified memory. The MoE runs on the native `moe_sm120` kernels
+  is wrong on unified memory. **Context defaults to 262144** (upstream's Spark
+  cap; native is 1M): 20/24 layers are 1024-token SWA, so only 4 global layers
+  keep full-length KV; at 0.70 util vLLM reports **1,384,695 KV tokens, 5.28x
+  concurrency at 262144** (measured; it reported 713k at 65536 — the figure
+  scales with max_model_len because SWA layers are fixed-size per request).
+  1M is untested — unified-memory OOM risk.
+  Prefill, not memory, is the cost at long context. The MoE runs on the native `moe_sm120` kernels
   (`is_device_capability_family(120)` is True on GB10) and **logs nothing about
   it** — absence of a MoE line in the backends table is not a fallback.
   **Measured** (image `647a7686`, 300-token single stream, warm): **39.5 tok/s**
