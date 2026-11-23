@@ -33,11 +33,18 @@ ENV TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST} \
 # plus the CUDA math-library DEV headers/symlinks. The runtime base ships the
 # CUDA .so runtimes but not the dev side (no cusparse.h, no unversioned
 # libnvrtc.so, etc.), which torch's ATen headers and vLLM's CMake require to
-# compile/link. cuda-libraries-dev-13-0 pulls cublas/cusparse/cusolver/cufft/
-# curand/nvjitlink/nvrtc dev in one shot, matched to the base's CUDA 13.0.
-RUN apt-get update \
+# compile/link. cuda-libraries-dev-<maj>-<min> pulls cublas/cusparse/cusolver/
+# cufft/curand/nvjitlink/nvrtc dev in one shot. The version is derived from the
+# base's own CUDA_VERSION env (13.0.x on v0.27.1, 13.2.x on the late-2026
+# nightly) -- a hardcoded -13-0 would mismatch a newer base's runtimes.
+# libdw-dev (elfutils): late-2026 main's bundled DeepGEMM JIT (_deep_gemm_C)
+# includes <elfutils/libdwfl.h>; upstream's build stage installs elfutils-devel.
+RUN cuda_mm="$(echo "${CUDA_VERSION}" | cut -d. -f1,2 | tr . -)" \
+ && echo ">> base CUDA ${CUDA_VERSION} -> cuda-libraries-dev-${cuda_mm}" \
+ && apt-get update \
  && apt-get install -y --no-install-recommends \
-      git cmake ccache build-essential curl cuda-libraries-dev-13-0 \
+      git cmake ccache build-essential curl "cuda-libraries-dev-${cuda_mm}" \
+      libdw-dev \
  && rm -rf /var/lib/apt/lists/*
 
 # vLLM main builds Rust artifacts via setuptools-rust, which needs a cargo
@@ -70,7 +77,10 @@ RUN git fetch --depth 1 origin ${VLLM_REF} \
  && git rev-parse HEAD | tee /opt/vllm-commit.txt
 
 # Strip torch from vLLM's requirement files so the pinned cu130 build is kept.
-RUN python3 use_existing_torch.py
+# The script moved from the repo root to tools/ in late 2026 (after v0.27.1);
+# accept either so both pinned releases and current main build.
+RUN if [ -f tools/use_existing_torch.py ]; then python3 tools/use_existing_torch.py; \
+    else python3 use_existing_torch.py; fi
 
 # Compile vLLM (C++/CUDA extensions) from source against the existing torch.
 # ccache is mounted as a BuildKit cache so repeat builds reuse object files.

@@ -28,8 +28,12 @@ DETACH=1 ./run.sh Qwen/Qwen3-8B          # detached server, restarts on boot
 ./run-qwen3.6-35b-a3b.sh [--mtp]                 # tuned preset for nvidia/Qwen3.6-35B-A3B-NVFP4
 ./run-gemma4-12b.sh [--no-tools]             # tuned preset for RedHatAI/gemma-4-12B-it-NVFP4 (multimodal)
 ./run-qwen3.8-27b-prismaaqua.sh [--no-spec]      # tuned preset for rdtand/Qwen3.8-27B-PrismaAQUA-5.5bit-vllm
+./run-inkling-2-mini.sh [--dspark] [--no-tools]  # thinkingmachines/Inkling-2-Mini (needs the 647a7686 nightly build)
 
 (cd observability && docker compose up -d) # Prometheus + Grafana on the server's /metrics (localhost:3000)
+
+python3 scripts/agent_sweep.py out.json  # 1/2/3-stream sweep (main agent + 2 subagents) vs a running server
+                                         # env: MODEL, URL, OUT_TOKENS (400), REPS (2)
 ```
 
 API is OpenAI-compatible on `http://localhost:8000/v1` (`curl http://localhost:8000/v1/models`).
@@ -74,7 +78,12 @@ into `Dockerfile` → image tagged `vllm-spark:<short-commit>`, `:latest`, and
 
 - The **runtime** base image lacks build tools the source compile needs: install
   `git cmake ccache build-essential` **and Rust** (vLLM main uses
-  `setuptools-rust`) **and `cuda-libraries-dev-13-0`** (the base ships CUDA `.so`
+  `setuptools-rust`) **and `cuda-libraries-dev-<maj>-<min>`** — derived from the
+  base's `CUDA_VERSION` env, because the late-2026 nightly base is **CUDA 13.2.1**
+  (v0.27.1 was 13.0; torch stays `+cu130` either way, and 13.2 runs fine on this
+  box's 580.178 driver) — **and `libdw-dev`** (late-2026 main's bundled DeepGEMM
+  JIT includes `<elfutils/libdwfl.h>`; fails at the last compile step without it)
+  (the base ships CUDA `.so`
   runtimes but not the dev headers/symlinks — without it you get missing
   `cusparse.h` / `libnvrtc.so NOTFOUND`).
 - **`vllm/vllm-openai:cu130-nightly` is a dead tag** — last built 2026-04-23,
@@ -95,6 +104,8 @@ into `Dockerfile` → image tagged `vllm-spark:<short-commit>`, `:latest`, and
   mismatch. Compare the **public** version: `flashinfer-jit-cache` carries a
   `+cu130` local suffix that `flashinfer-python` does not, and a naive string
   compare throws away good cubins.
+- `use_existing_torch.py` moved from the repo root to **`tools/`** after v0.27.1;
+  the Dockerfile tries both.
 - vLLM's build requirements live at `requirements/build/cuda.txt` (a directory
   layout, not the old `build.txt`).
 - **The transformers-from-source hack is now opt-in and normally unnecessary.**
@@ -259,3 +270,31 @@ into `Dockerfile` → image tagged `vllm-spark:<short-commit>`, `:latest`, and
   *and* costs 21% of the KV cache (417,888 vs 525,830; 1.59x vs 2.01x). The
   Spark's unified memory does not reward big prefill chunks — ignore the warning.
   Reuses the unified-memory OOM safety scaffolding verbatim.
+- `run-inkling-2-mini.sh` serves `thinkingmachines/Inkling-2-Mini` (looped
+  multimodal MoE, `Inkling2LoopForConditionalGeneration`, 26B/3.5B active,
+  ModelOpt NVFP4 experts + MXFP8 last 4 layers, bundled DSpark draft). **Not in
+  any stable vLLM** (PR #69028 merged 2026-11-21, after v0.34.0), so it needs the
+  build `./build.sh --vllm-ref 647a76866b4559a74e27d1c6b55fbffe85c07ce4` — that SHA
+  is exactly what `nightly-aarch64` (digest `sha256:135d65d5…`) was built from, so
+  base/source lockstep holds, and it includes #69168 (sm120 small-M GEMM) and
+  #69021 (SM12x TMA). The official `vllm/vllm-openai:inkling-2-mini` image also
+  works (pre-merge snapshot, CUDA 13.0.3; smoke-tested) via `IMAGE=`. No
+  `--quantization` (auto-detects as `inkling2`); `GPU_MEM_UTIL` defaults to
+  **0.70** — on CUDA the unset default is now **1.0** (extensible KV cache), which
+  is wrong on unified memory. **Context defaults to 262144** (upstream's Spark
+  cap; native is 1M): 20/24 layers are 1024-token SWA, so only 4 global layers
+  keep full-length KV; at 0.70 util vLLM reports **1,384,695 KV tokens, 5.28x
+  concurrency at 262144** (measured; it reported 713k at 65536 — the figure
+  scales with max_model_len because SWA layers are fixed-size per request).
+  1M is untested — unified-memory OOM risk.
+  Prefill, not memory, is the cost at long context. The MoE runs on the native `moe_sm120` kernels
+  (`is_device_capability_family(120)` is True on GB10) and **logs nothing about
+  it** — absence of a MoE line in the backends table is not a fallback.
+  **Measured** (image `647a7686`, 300-token single stream, warm): **39.5 tok/s**
+  plain; 48,665-token needle retrieved exactly at ~1.5k tok/s prefill; host
+  MemAvailable flat (~31 GiB). **DSpark (`--dspark`) is opt-in because it is
+  slower here** — 36.0 tok/s at temp 0, acceptance length 2.1–2.7 of 7, −15% KV —
+  and `num_speculative_tokens` is **hard-fixed at 7** (block size − 1; vLLM
+  rejects other values). Open upstream issues: #69181 (~3 GB conv-state
+  over-reserve on SM12x; keep `--max-num-seqs` low), #69267/#69241 (streaming tool
+  calls; use `stream=false` for tool turns).
